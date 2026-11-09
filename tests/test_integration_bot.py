@@ -394,7 +394,7 @@ async def test_feed_alert_buttons_allow_and_deny(e):
     e.fh.feed += [alert(2), alert(3, title="Deuxième")]
     await e.bot.relay.feed()
     posted = e.fd.in_channel("CA")
-    assert len(posted) == 2 and "Autoriser ?" in posted[0]["content"]
+    assert len(posted) == 2 and "Autoriser ?" in posted[0]["embeds"][0]["title"]
     btns = posted[0]["components"][0]["components"]
     assert [b["custom_id"] for b in btns] == ["fa:2:allow", "fa:2:deny"] and [b["style"] for b in btns] == [1, 4]
     await e.bot.relay.feed()
@@ -405,8 +405,8 @@ async def test_feed_alert_buttons_allow_and_deny(e):
     await until(lambda: len(e.fd.responses) == 2)
     assert sorted(e.fh.acts) == [(2, "allow"), (3, "deny")]
     by = {r["id"]: r for r in e.fd.responses}
-    assert by["IA"]["type"] == 7 and "Allowed" in by["IA"]["data"]["content"] and by["IA"]["data"].get("components") in ([], None)
-    assert "Denied" in by["IB"]["data"]["content"]
+    assert by["IA"]["type"] == 7 and "Allowed" in by["IA"]["data"]["embeds"][0]["fields"][0]["value"] and by["IA"]["data"].get("components") in ([], None)
+    assert "Denied" in by["IB"]["data"]["embeds"][0]["fields"][0]["value"]
 
 
 @scenario
@@ -421,7 +421,7 @@ async def test_feed_double_click_and_stranger_click(e):
     for n in (1, 2):
         await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": "fa:2:allow"}, channel="CA", iid=f"I{n}"))
     await until(lambda: len(e.fd.responses) == 3)
-    assert all("Allowed" in r["data"]["content"] for r in e.fd.responses[1:])   # idempotent on the server
+    assert all("Allowed" in r["data"]["embeds"][0]["fields"][0]["value"] for r in e.fd.responses[1:])   # idempotent on the server
 
 
 @scenario
@@ -433,7 +433,7 @@ async def test_feed_alert_resolved_elsewhere_is_edited_and_act_error(e):
     mid = e.fd.in_channel("CA")[0]["id"]
     e.fh.feed[1].update(resolved=5.0, resolution="Fixed", actions=[])      # handled in the web UI
     await e.bot.relay.feed()
-    assert e.fd.edits[-1]["id"] == mid and "Fixed" in e.fd.edits[-1]["content"] and e.fd.edits[-1]["components"] == []
+    assert e.fd.edits[-1]["id"] == mid and "Fixed" in e.fd.edits[-1]["embeds"][0]["fields"][0]["value"] and e.fd.edits[-1]["components"] == []
     await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": "fa:99:allow"}, channel="CA"))     # unknown event -> 404
     await until(lambda: e.fd.responses)
     assert e.fd.responses[0]["type"] == 4 and e.fd.responses[0]["data"]["flags"] == 64
@@ -462,7 +462,7 @@ async def test_agent_result_relayed_and_owner_reply_runs_agent(e):
     await e.bot.relay.agents()
     assert e.fd.threads[0]["parent"] == "CAG" and "Writer" in e.fd.threads[0]["name"]
     out = e.fd.in_channel("T1")
-    assert out[0]["content"].startswith("Article prêt") and "0.05" in out[0]["content"]
+    assert out[0]["embeds"][0]["description"] == "Article prêt" and "0.05" in out[0]["embeds"][0]["footer"]["text"]
     await e.bot.relay.agents()
     assert len(e.fd.in_channel("T1")) == 1                      # not repeated
     await e.fg.dispatch("MESSAGE_CREATE", msg("fais une v2", channel="T1", mid="m5"))

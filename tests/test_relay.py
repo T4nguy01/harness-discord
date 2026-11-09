@@ -24,13 +24,13 @@ def test_render_buttons_and_resolution():
     e = ev(7, "agents", "warning", actions=[{"id": "allow", "label": "Allow", "style": "primary"},
                                             {"id": "deny", "label": "Deny", "style": "danger"},
                                             {"id": "open", "label": "Open"}], url="/agents/x")
-    text, comps = render(e, "http://h")
-    assert "⚠️" in text and "**T7**" in text
+    embed, comps = render(e, "http://h")
+    assert "⚠️" in embed["title"] and "T7" in embed["title"] and embed["description"] == "b" and embed["footer"]["text"] == "agents"
     b = comps[0]["components"]
     assert b[0]["custom_id"] == "fa:7:allow" and b[0]["style"] == 1 and b[1]["style"] == 4
     assert b[2]["style"] == 5 and b[2]["url"] == "http://h/agents/x"
-    text, comps = render(ev(7, resolved=2.0, resolution="Allowed"), "http://h")
-    assert "Allowed" in text and comps == []
+    embed, comps = render(ev(7, resolved=2.0, resolution="Allowed"), "http://h")
+    assert embed["fields"][0]["value"] == "Allowed" and comps == [] and embed["color"] == relay.DONE_COLOR
 
 
 class Feed:
@@ -57,14 +57,14 @@ def test_feed_starts_from_now_then_posts_new_events_in_the_right_channels(tmp_pa
         old += [ev(3, "crons", "error"), ev(4, "security"), ev(5, "shop")]
         await r.feed()
         assert [(s["channel"]) for s in rest.sent] == ["K", "A", "N"]
-        assert "T3" in rest.sent[0]["content"]
+        assert "T3" in rest.sent[0]["embeds"][0]["title"]
         old[4:4] = []
         await r.feed()
         assert len(rest.sent) == 3                               # nothing twice
         # an alert resolved elsewhere gets its message edited
         old[2] = ev(3, "crons", "error", resolved=9.0, resolution="Fixed")
         await r.feed()
-        assert rest.edits and "Fixed" in rest.edits[0][2]
+        assert rest.edits and "Fixed" in rest.edits[0][3][0]["fields"][0]["value"]
     run(go())
 
 
@@ -74,6 +74,6 @@ def test_button_press_calls_the_act_endpoint(tmp_path):
         bot.h = Feed([])
         await bot.on_interaction({"type": 3, "id": "i", "token": "t", "channel_id": "A", "user": {"id": "42"},
                                   "data": {"custom_id": "fa:9:allow"}})
-        kind, content, comps = rest.responses[0]
-        assert kind == 7 and "Allowed" in content and comps == []
+        kind, content, comps, embeds = rest.responses[0]
+        assert kind == 7 and "Allowed" in embeds[0]["fields"][0]["value"] and comps == []
     run(go())

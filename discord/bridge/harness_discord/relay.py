@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from . import __version__, config
@@ -34,14 +35,27 @@ def route(e: dict) -> str:
     return "notifications"
 
 
-def render(e: dict, web_url: str) -> tuple[str, list[dict]]:
-    head = f"{LEVEL.get(e.get('level'), 'ℹ️')} **{fmt.clip(e.get('title', ''), 200)}**"
-    if e.get("count", 1) > 1:
-        head += f" ×{e['count']}"
+COLOR = {"info": 0x5865F2, "success": 0x57F287, "warning": 0xFEE75C, "error": 0xED4245}
+DONE_COLOR = 0x95A5A6
+
+
+def render(e: dict, web_url: str) -> tuple[dict, list[dict]]:
+    """A feed event as a Discord embed (colour = level) plus its action buttons."""
+    done = bool(e.get("resolved"))
+    embed: dict = {"title": f"{LEVEL.get(e.get('level'), 'ℹ️')} {fmt.clip(e.get('title', ''), 240)}",
+                   "color": DONE_COLOR if done else COLOR.get(e.get("level"), COLOR["info"])}
     body = (e.get("body") or "").strip()
-    text = head + (("\n" + fmt.clip_block(body, 1500)) if body else "")
-    if e.get("resolved"):
-        text += f"\n— *{e.get('resolution') or '✓'}*"
+    if body:
+        embed["description"] = fmt.clip_block(body, 3500)
+    if done:
+        embed["fields"] = [{"name": "✓", "value": fmt.clip(e.get("resolution") or "✓", 500)}]
+    foot = (e.get("agent") or e.get("source") or "").split("/")[-1]
+    if e.get("count", 1) > 1:
+        foot += f" · ×{e['count']}"
+    if foot.strip(" ·"):
+        embed["footer"] = {"text": foot[:200]}
+    if isinstance(e.get("at"), (int, float)) and e["at"] > 1e9:
+        embed["timestamp"] = datetime.fromtimestamp(e["at"], timezone.utc).isoformat()
     buttons = []
     for a in e.get("actions") or []:
         if not SAFE_ID.fullmatch(str(a.get("id", ""))):
@@ -55,7 +69,7 @@ def render(e: dict, web_url: str) -> tuple[str, list[dict]]:
         buttons.append({"type": 2, "style": STYLE.get(a.get("style"), 2), "label": a["label"][:80],
                         "custom_id": f"fa:{e['id']}:{a['id']}"})
     comps = [{"type": 1, "components": buttons[:5]}] if buttons else []
-    return text[:2000], comps
+    return embed, comps
 
 
 class Relay:
@@ -139,9 +153,10 @@ class Relay:
         for e in sorted((x for x in events if x["id"] > st["feed_last"]), key=lambda x: x["id"]):
             ch = self.channel_for(e)
             if ch and not e.get("resolved"):
-                text, comps = render(e, self.bot.web_url)
+                embed, comps = render(e, self.bot.web_url)
                 try:
-                    m = await self.bot.rest.send(ch, text, components=comps or None, silent=e.get("level") in QUIET)
+                    m = await self.bot.rest.send(ch, "", embeds=[embed], components=comps or None,
+                                                 silent=e.get("level") in QUIET)
                     st["posted"][str(e["id"])] = {"channel": ch, "message": m["id"], "done": bool(e.get("resolved"))}
                 except DiscordError as err:
                     log.warning("feed %s: %s", e["id"], err)
@@ -149,9 +164,9 @@ class Relay:
         for eid, info in list(st["posted"].items()):             # an alert handled elsewhere: show how it ended
             e = byid.get(int(eid))
             if e and e.get("resolved") and not info.get("done"):
-                text, comps = render(e, self.bot.web_url)
+                embed, comps = render(e, self.bot.web_url)
                 try:
-                    await self.bot.rest.edit(info["channel"], info["message"], text, components=[])
+                    await self.bot.rest.edit(info["channel"], info["message"], embeds=[embed], components=[])
                 except DiscordError:
                     pass
                 info["done"] = True
@@ -189,12 +204,13 @@ class Relay:
                 label = f"{p}/{t} · {a.get('display_name') or name}"
                 info["thread"] = (await self.bot.rest.start_thread(ch, label[:100]))["id"]
             for m in fresh:
-                tail = f"\n-# {m.get('cost', 0):.2f} $" if m.get("cost") else ""
-                body = m.get("text") or "…"
-                if m.get("ok") is False:
-                    body = "⚠ " + body
-                for part in fmt.chunk(body + tail):
-                    sent = await self.bot.rest.send(info["thread"], part, silent=False)
+                ok = m.get("ok") is not False
+                parts = fmt.chunk(m.get("text") or "…", 4000)
+                for n, part in enumerate(parts):
+                    embed: dict = {"description": part, "color": COLOR["success"] if ok else COLOR["error"]}
+                    if n == len(parts) - 1 and m.get("cost"):
+                        embed["footer"] = {"text": f"{m['cost']:.2f} $"}
+                    sent = await self.bot.rest.send(info["thread"], "", embeds=[embed], silent=False)
                     self.bot.remember(sent["id"], "agent:" + path)
                 info["seen"] = m["at"]
         self.bot.store.save()

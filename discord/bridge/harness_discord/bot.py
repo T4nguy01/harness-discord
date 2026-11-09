@@ -479,8 +479,8 @@ class Bot:
                 e = await self.relay.act(int(eid), action)
             except HarnessError as err:
                 return await self.rest.respond(i, 4, self.t("err", e=err), ephemeral=True)
-            text, comps = render(e, self.web_url)
-            return await self.rest.respond(i, 7, text, components=comps)
+            embed, comps = render(e, self.web_url)
+            return await self.rest.respond(i, 7, "", components=comps, embeds=[embed])
         if kind == "sess":                                     # a session chosen in /sessions
             await self.rest.respond(i, 7, self.t("sessions_pick"), components=[])
             return await self.open_session(i["data"]["values"][0], i["channel_id"], not i.get("guild_id"))

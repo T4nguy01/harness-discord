@@ -15,13 +15,13 @@ class FakeRest:
         self.sent, self.edits, self.threads, self.responses, self.deleted, self.renamed = [], [], [], [], [], []
         self.n = 100
 
-    async def send(self, channel, content="", *, components=None, reply_to=None, silent=False):
+    async def send(self, channel, content="", *, components=None, reply_to=None, silent=False, embeds=None):
         self.n += 1
-        self.sent.append({"id": str(self.n), "channel": channel, "content": content, "components": components})
+        self.sent.append({"id": str(self.n), "channel": channel, "content": content, "components": components, "embeds": embeds})
         return {"id": str(self.n)}
 
-    async def edit(self, channel, message, content=None, components=None):
-        self.edits.append((channel, message, content))
+    async def edit(self, channel, message, content=None, components=None, embeds=None):
+        self.edits.append((channel, message, content, embeds))
         return {}
 
     async def typing(self, channel):
@@ -37,8 +37,8 @@ class FakeRest:
     async def channel(self, channel):
         return {"type": 0}
 
-    async def respond(self, i, kind, content=None, components=None, ephemeral=False):
-        self.responses.append((kind, content, components))
+    async def respond(self, i, kind, content=None, components=None, ephemeral=False, embeds=None):
+        self.responses.append((kind, content, components, embeds))
 
     async def followup(self, i, app, content, ephemeral=False):
         self.responses.append(("follow", content, None))

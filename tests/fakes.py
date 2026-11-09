@@ -170,7 +170,7 @@ class FakeDiscord:
         body = json.loads(req.content) if req.content else {}
         m = req.method
         if (r := re.fullmatch(r"/channels/(\w+)/messages", path)) and m == "POST":
-            msg = {"id": self.nid(), "channel": r[1], "content": body.get("content", ""), "orig": body.get("content", ""), "components": body.get("components"),
+            msg = {"id": self.nid(), "channel": r[1], "content": body.get("content", ""), "orig": body.get("content", ""), "components": body.get("components"), "embeds": body.get("embeds"),
                    "flags": body.get("flags", 0), "ref": (body.get("message_reference") or {}).get("message_id")}
             self.messages.append(msg)
             return httpx.Response(200, json={"id": msg["id"]})

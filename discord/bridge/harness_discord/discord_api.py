@@ -59,8 +59,10 @@ class Rest:
     # --- messages -------------------------------------------------------------------------------------------
 
     async def send(self, channel: str, content: str = "", *, components: list | None = None, reply_to: str | None = None,
-                   silent: bool = False) -> dict:
+                   silent: bool = False, embeds: list | None = None) -> dict:
         body: dict[str, Any] = {"content": content, "allowed_mentions": NO_MENTIONS}
+        if embeds:
+            body["embeds"] = embeds
         if components is not None:
             body["components"] = components
         if reply_to:
@@ -69,8 +71,11 @@ class Rest:
             body["flags"] = 1 << 12                      # SUPPRESS_NOTIFICATIONS
         return await self.call("POST", f"/channels/{channel}/messages", json=body)
 
-    async def edit(self, channel: str, message: str, content: str | None = None, components: list | None = None) -> dict:
+    async def edit(self, channel: str, message: str, content: str | None = None, components: list | None = None,
+                   embeds: list | None = None) -> dict:
         body: dict[str, Any] = {"allowed_mentions": NO_MENTIONS}
+        if embeds is not None:
+            body["embeds"] = embeds
         if content is not None:
             body["content"] = content
         if components is not None:
@@ -150,8 +155,10 @@ class Rest:
         await self.call("PUT", f"/applications/{app_id}/commands", json=commands)
 
     async def respond(self, interaction: dict, kind: int, content: str | None = None, components: list | None = None,
-                      ephemeral: bool = False) -> None:
+                      ephemeral: bool = False, embeds: list | None = None) -> None:
         data: dict[str, Any] = {"allowed_mentions": NO_MENTIONS}
+        if embeds is not None:
+            data["embeds"] = embeds
         if content is not None:
             data["content"] = content
         if components is not None:
