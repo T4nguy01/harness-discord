@@ -52,6 +52,7 @@ def _status(ctx):
             "reply_mode": cfg.get("reply_mode", "live"),
             "relay_feed": cfg.get("relay_feed", True),
             "relay_agents": cfg.get("relay_agents", True),
+            "relay_bell": cfg.get("relay_bell", True),
         },
         "layout": {"guild": lay.get("guild", ""), "projects": sorted(lay.get("projects", {})),
                    "system": [k for k in ("alerts", "notifications", "crons", "agents") if lay.get(k)]},
@@ -80,7 +81,7 @@ def handle(ctx, method, path, query, body):
             if body["reply_mode"] not in MODES:
                 return 400, {"error": "bad_mode", "message": "reply_mode: live or final."}
             cfg["reply_mode"] = body["reply_mode"]
-        for k in ("relay_feed", "relay_agents"):
+        for k in ("relay_feed", "relay_agents", "relay_bell"):
             if k in body:
                 cfg[k] = bool(body[k])
         _write(d / "config.json", cfg)

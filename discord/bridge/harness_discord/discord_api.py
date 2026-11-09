@@ -183,8 +183,9 @@ class Gateway:
 
     URL = "wss://gateway.discord.gg/?v=10&encoding=json"
 
-    def __init__(self, token: str, handler: Handler):
+    def __init__(self, token: str, handler: Handler, url: str | None = None):
         self.token, self.handler = token, handler
+        self.url = url or self.URL
         self.session_id: str | None = None
         self.resume_url: str | None = None
         self.seq: int | None = None
@@ -211,7 +212,7 @@ class Gateway:
             delay = min(delay * 2, 60)
 
     async def _connect(self) -> None:
-        url = (self.resume_url + "/?v=10&encoding=json") if self.resume_url and self.session_id else self.URL
+        url = (self.resume_url + "/?v=10&encoding=json") if self.resume_url and self.session_id else self.url
         async with websockets.connect(url, max_size=2 ** 24, ping_interval=None) as ws:
             hello = json.loads(await ws.recv())
             interval = hello["d"]["heartbeat_interval"] / 1000

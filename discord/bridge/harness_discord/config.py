@@ -45,6 +45,7 @@ DEFAULTS = {
     "reply_mode": "live",    # live = a status message updated while Claude works | final = only the answer
     "relay_feed": True,      # post the Harness notifications feed (alerts, approvals, job reports)
     "relay_agents": True,    # post the results of agents (one thread per agent)
+    "relay_bell": True,      # ring in the thread when a turn started elsewhere (web UI) ends in a session with its bell on
 }
 
 

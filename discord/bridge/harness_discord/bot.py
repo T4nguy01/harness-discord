@@ -63,6 +63,7 @@ class Bot:
         self.web_url = web_url
         self.pending: dict[str, Pending] = {}
         self.followers: dict[str, Follower] = {}
+        self.follow_end: dict[str, float] = {}                      # session -> when its last Discord turn ended (bell)
         self.msg_session: OrderedDict[str, str] = OrderedDict()     # bot message id -> session (DM replies)
         self.owner = settings["owner_id"]
         self.dm_channel = store.data.get("dm_channel", "")
@@ -334,6 +335,7 @@ class Bot:
                                 f.expect = 0              # nothing more is coming for the messages we counted
                             continue
                         except StopAsyncIteration:
+                            await asyncio.sleep(1)           # the stream closed: do not spin while reconnecting
                             break
                         f.active_at = time.time()
                         if kind == "state":
@@ -357,6 +359,7 @@ class Bot:
             if f.typing:
                 f.typing.cancel()
             self.followers.pop(f.sid, None)
+            self.follow_end[f.sid] = time.time()
 
     async def on_event(self, f: Follower, ev: dict) -> None:
         typ = ev.get("type")

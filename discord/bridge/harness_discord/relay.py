@@ -10,6 +10,7 @@ from typing import Any
 from . import __version__, config
 
 from . import fmt
+from .bell import Bell
 from .discord_api import DiscordError
 from .harness import HarnessError
 
@@ -57,6 +58,7 @@ class Relay:
     def __init__(self, bot: Any):
         self.bot = bot
         self.n = 0
+        self.bell = Bell(bot)
 
     @property
     def st(self) -> dict:
@@ -70,6 +72,8 @@ class Relay:
                 await self.flags()
                 if self.bot.cfg.get("relay_feed", True):
                     await self.feed()
+                if self.bot.cfg.get("relay_bell", True):
+                    await self.bell.poll()
                 if self.n % 3 == 0 and self.bot.cfg.get("relay_agents", True):
                     await self.agents()
                 if self.n % 3 == 0:

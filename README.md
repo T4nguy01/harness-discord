@@ -20,6 +20,7 @@ thread per session.
   `crons` (job reports), `agents` (requests with **Allow / Deny** buttons, failures) and `notifications` (everything else).
   An alert handled in Harness is updated in Discord too.
 - **Agents**: each agent gets a thread in `agents` with its results; reply in the thread to start it again.
+- **Bell**: when a turn started elsewhere (web UI) ends in a session with its bell on, a short "✅ title - preview" rings in its thread.
 - **Settings page** in Harness (sidebar): status, owner, reply mode, what to relay, resync, test message, restart.
 
 Not possible from outside the server: the two-step sign-in approval (it needs the product's internals).
