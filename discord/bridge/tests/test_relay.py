@@ -1,0 +1,79 @@
+import asyncio
+
+from harness_discord import relay
+from harness_discord.relay import Relay, render, route
+from test_bot import FakeRest, make, run
+
+
+def ev(i, source="system", level="info", **kw):
+    d = {"id": i, "at": 1.0, "source": source, "level": level, "title": f"T{i}", "body": "b", "url": "", "count": 1,
+         "read": False, "actions": [], "ref": None, "agent": None, "resolved": None, "resolution": None}
+    d.update(kw)
+    return d
+
+
+def test_routes():
+    assert route(ev(1, "crons")) == "crons"
+    assert route(ev(1, "security")) == "alerts" and route(ev(1, "health")) == "alerts"
+    assert route(ev(1, "agents", agent="projects/a/topics/b/agents/c")) == "agents"
+    assert route(ev(1, "shop")) == "notifications"
+    assert route(ev(1, "shop", actions=[{"id": "allow", "label": "Allow"}])) == "alerts"
+
+
+def test_render_buttons_and_resolution():
+    e = ev(7, "agents", "warning", actions=[{"id": "allow", "label": "Allow", "style": "primary"},
+                                            {"id": "deny", "label": "Deny", "style": "danger"},
+                                            {"id": "open", "label": "Open"}], url="/agents/x")
+    text, comps = render(e, "http://h")
+    assert "⚠️" in text and "**T7**" in text
+    b = comps[0]["components"]
+    assert b[0]["custom_id"] == "fa:7:allow" and b[0]["style"] == 1 and b[1]["style"] == 4
+    assert b[2]["style"] == 5 and b[2]["url"] == "http://h/agents/x"
+    text, comps = render(ev(7, resolved=2.0, resolution="Allowed"), "http://h")
+    assert "Allowed" in text and comps == []
+
+
+class Feed:
+    def __init__(self, events):
+        self.events = events
+
+    async def request(self, method, path, **kw):
+        if path == "/api/feed":
+            return {"events": self.events}
+        if path.startswith("/api/feed/"):
+            return {"event": ev(int(path.split("/")[3]), resolved=3.0, resolution="Allowed")}
+        return {}
+
+
+def test_feed_starts_from_now_then_posts_new_events_in_the_right_channels(tmp_path):
+    async def go():
+        bot, rest, h = make(tmp_path, channel="C1")
+        bot.lay.update({"alerts": "A", "crons": "K", "notifications": "N", "agents": "G"})
+        old = [ev(1), ev(2, "crons")]
+        bot.h = Feed(old)
+        r = Relay(bot)
+        await r.feed()
+        assert rest.sent == []                                   # history is not replayed
+        old += [ev(3, "crons", "error"), ev(4, "security"), ev(5, "shop")]
+        await r.feed()
+        assert [(s["channel"]) for s in rest.sent] == ["K", "A", "N"]
+        assert "T3" in rest.sent[0]["content"]
+        old[4:4] = []
+        await r.feed()
+        assert len(rest.sent) == 3                               # nothing twice
+        # an alert resolved elsewhere gets its message edited
+        old[2] = ev(3, "crons", "error", resolved=9.0, resolution="Fixed")
+        await r.feed()
+        assert rest.edits and "Fixed" in rest.edits[0][2]
+    run(go())
+
+
+def test_button_press_calls_the_act_endpoint(tmp_path):
+    async def go():
+        bot, rest, h = make(tmp_path)
+        bot.h = Feed([])
+        await bot.on_interaction({"type": 3, "id": "i", "token": "t", "channel_id": "A", "user": {"id": "42"},
+                                  "data": {"custom_id": "fa:9:allow"}})
+        kind, content, comps = rest.responses[0]
+        assert kind == 7 and "Allowed" in content and comps == []
+    run(go())

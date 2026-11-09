@@ -41,9 +41,10 @@ def state_dir() -> Path:
 
 DEFAULTS = {
     "owner_id": "",          # the only Discord user the bot listens to
-    "channel_id": "",        # text channel where sessions get a thread (empty = DMs only)
+    "guild_id": "",          # the Discord server (empty = the only one the bot is in)
     "reply_mode": "live",    # live = a status message updated while Claude works | final = only the answer
-    "keep_days": 30,
+    "relay_feed": True,      # post the Harness notifications feed (alerts, approvals, job reports)
+    "relay_agents": True,    # post the results of agents (one thread per agent)
 }
 
 
@@ -56,8 +57,6 @@ def load_settings() -> dict:
         pass
     if os.environ.get("DISCORD_OWNER_ID"):
         d["owner_id"] = os.environ["DISCORD_OWNER_ID"].strip()
-    if os.environ.get("DISCORD_CHANNEL_ID"):
-        d["channel_id"] = os.environ["DISCORD_CHANNEL_ID"].strip()
     d["owner_id"] = str(d["owner_id"])
-    d["channel_id"] = str(d["channel_id"] or "")
+    d["guild_id"] = str(d["guild_id"] or "")
     return d

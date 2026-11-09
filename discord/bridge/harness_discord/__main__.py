@@ -20,7 +20,7 @@ async def amain() -> int:
     if not cfg["owner_id"]:
         cfg["owner_id"] = config.key("DISCORD_OWNER_ID") or ""
     if not (token and password and cfg["owner_id"]):
-        log.error("missing DISCORD_BOT_TOKEN, HARNESS_PASSWORD or the owner id (settings.owner_id / DISCORD_OWNER_ID)")
+        log.error("missing DISCORD_BOT_TOKEN, HARNESS_PASSWORD or the owner id (owner_id in config.json or DISCORD_OWNER_ID)")
         return 2
     url = config.harness_url()
     h = Harness(url, password)

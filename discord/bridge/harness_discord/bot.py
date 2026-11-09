@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from . import fmt, layout
+from .relay import Relay, render
 from .discord_api import DiscordError, Gateway, Rest
 from .harness import Harness, HarnessError
 from .store import Store
@@ -67,6 +68,8 @@ class Bot:
         self.dm_channel = store.data.get("dm_channel", "")
         self.lay: dict = store.data.setdefault("layout", {})
         self.sync_task: asyncio.Task | None = None
+        self.relay = Relay(self)
+        self.relay_task: asyncio.Task | None = None
 
     def t(self, key: str, **kw: Any) -> str:
         s = T[self.lang].get(key) or T["en"][key]
@@ -91,6 +94,8 @@ class Bot:
         await self.sync_layout()
         if not self.sync_task:
             self.sync_task = asyncio.create_task(self._sync_loop())
+        if not self.relay_task:
+            self.relay_task = asyncio.create_task(self.relay.run())
         log.info("ready: commands registered, owner %s, %d project channels", self.owner, len(self.lay.get("projects", {})))
 
     async def _sync_loop(self) -> None:
@@ -167,6 +172,14 @@ class Bot:
         sid = self.store.session_of_channel(ch)
         if sid:
             return await self.forward(sid, m, ch)
+        agent = self.relay.agent_of_thread(ch)
+        if agent:
+            try:
+                await self.relay.run_agent(agent, (m.get("content") or "").strip())
+                await self.rest.react(ch, m["id"], "✅")
+            except HarnessError as e:
+                await self.rest.send(ch, self.t("err", e=e))
+            return
         if in_dm:
             self.dm_channel = ch
             ref = (m.get("message_reference") or {}).get("message_id")
@@ -452,6 +465,14 @@ class Bot:
             label = v.split("projects/", 1)[-1].replace("/topics/", "/")
             await self.rest.respond(i, 7, f"✅ {label}", components=[])
             return await self.start(p, v)
+        if kind == "fa":                                       # a feed alert button: Allow / Deny / Seen...
+            _, eid, action = i["data"]["custom_id"].split(":")
+            try:
+                e = await self.relay.act(int(eid), action)
+            except HarnessError as err:
+                return await self.rest.respond(i, 4, self.t("err", e=err), ephemeral=True)
+            text, comps = render(e, self.web_url)
+            return await self.rest.respond(i, 7, text, components=comps)
         if kind == "sess":                                     # a session chosen in /sessions
             await self.rest.respond(i, 7, self.t("sessions_pick"), components=[])
             return await self.open_session(i["data"]["values"][0], i["channel_id"], not i.get("guild_id"))

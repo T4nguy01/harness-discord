@@ -36,6 +36,7 @@ T = {
         "d_close": "Archive the session", "d_model": "Show or change the model", "d_modelid": "Model id or opus / sonnet / haiku",
         "d_status": "State of the session", "d_help": "List the commands",
         "hint_dm": "Write here to talk to Claude.",
+        "test_ok": "Test message from Harness: the Discord bridge works.",
     },
     "fr": {
         "where": "Dans quel topic ?",
@@ -73,5 +74,6 @@ T = {
         "d_close": "Archive la session", "d_model": "Voir ou changer le modèle", "d_modelid": "Id du modèle ou opus / sonnet / haiku",
         "d_status": "État de la session", "d_help": "Liste des commandes",
         "hint_dm": "Écris ici pour parler à Claude.",
+        "test_ok": "Message de test depuis Harness : le pont Discord fonctionne.",
     },
 }

@@ -68,3 +68,9 @@ def chunk(text: str, limit: int = LIMIT) -> list[str]:
 def clip(s: str, n: int) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def clip_block(s: str, n: int) -> str:
+    """Keep line breaks (an alert body is a few lines), cut at n characters."""
+    s = s.strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
