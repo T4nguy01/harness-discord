@@ -24,8 +24,8 @@ class Store:
         os.replace(tmp, self.path)
 
     # session id -> {"channel": thread id, "path": topic path}
-    def link(self, sid: str, channel: str, path: str) -> None:
-        self.data["threads"][sid] = {"channel": str(channel), "path": path}
+    def link(self, sid: str, channel: str, path: str, parent: str = "") -> None:
+        self.data["threads"][sid] = {"channel": str(channel), "path": path, "parent": str(parent)}
         self.save()
 
     def unlink(self, sid: str) -> None:

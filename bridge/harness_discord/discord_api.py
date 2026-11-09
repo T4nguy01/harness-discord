@@ -120,6 +120,26 @@ class Rest:
     async def open_dm(self, user: str) -> dict:
         return await self.call("POST", "/users/@me/channels", json={"recipient_id": user})
 
+    async def guilds(self) -> list[dict]:
+        return await self.call("GET", "/users/@me/guilds")
+
+    async def guild_channels(self, guild: str) -> list[dict]:
+        return await self.call("GET", f"/guilds/{guild}/channels")
+
+    async def create_channel(self, guild: str, name: str, kind: int = 0, parent: str | None = None, topic: str = "",
+                             overwrites: list | None = None) -> dict:
+        body: dict[str, Any] = {"name": name[:100], "type": kind}
+        if parent:
+            body["parent_id"] = parent
+        if topic:
+            body["topic"] = topic[:1024]
+        if overwrites is not None:
+            body["permission_overwrites"] = overwrites
+        return await self.call("POST", f"/guilds/{guild}/channels", json=body)
+
+    async def modify_channel(self, channel: str, **fields: Any) -> dict:
+        return await self.call("PATCH", f"/channels/{channel}", json=fields)
+
     async def me(self) -> dict:
         return await self.call("GET", "/users/@me")
 

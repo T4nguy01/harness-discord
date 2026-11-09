@@ -63,8 +63,12 @@ class FakeHarness:
         self.events = []
         self.session_title = ""
 
+    topics = 2
+
     async def tree(self):
-        return [{"name": "dev", "topics": [{"name": "blog", "path": TOPIC, "description": "Blog", "running": 0, "session_count": 3}]}]
+        tp = [{"name": "blog", "path": TOPIC, "description": "Blog", "running": 0, "session_count": 3},
+              {"name": "docs", "path": "projects/dev/topics/docs", "description": "", "running": 0, "session_count": 1}]
+        return [{"name": "dev", "topics": tp[: self.topics]}]
 
     async def create_session(self, path, message="", attachments=None, voice=None, title=""):
         self.created.append((path, message, attachments, voice))
@@ -99,8 +103,10 @@ class FakeHarness:
 
 def make(tmp_path, channel=""):
     rest, h = FakeRest(), FakeHarness()
-    cfg = {"owner_id": OWNER, "channel_id": channel, "reply_mode": "live", "keep_days": 30}
+    cfg = {"owner_id": OWNER, "reply_mode": "live", "keep_days": 30}
     bot = Bot(h, rest, FakeGw(), Store(tmp_path / "state.json"), cfg, "fr", "http://x")
+    if channel:
+        bot.lay["projects"] = {"dev": channel}                  # #dev is the channel of project dev
     return bot, rest, h
 
 
@@ -192,6 +198,27 @@ def test_attachments_are_uploaded_and_voice_is_passed_apart(tmp_path):
         await settle(bot)
         assert h.messages[0][0] == "S1" and h.messages[0][2] == [f"{TOPIC}/attachments/a.png"]
         assert h.messages[0][3] == f"{TOPIC}/attachments/v.ogg"
+    run(go())
+
+
+def test_project_channel_with_one_topic_starts_without_asking(tmp_path):
+    async def go():
+        bot, rest, h = make(tmp_path, channel="C1")
+        h.topics = 1
+        h.events = TURN
+        await bot.on_message(msg("salut", channel="C1", guild="G"))
+        await settle(bot)
+        assert h.created and h.created[0][0] == TOPIC
+        assert rest.threads[0][1].startswith("blog · ")
+        assert bot.store.data["threads"]["S1"]["parent"] == "C1"
+    run(go())
+
+
+def test_other_channels_are_ignored(tmp_path):
+    async def go():
+        bot, rest, h = make(tmp_path, channel="C1")
+        await bot.on_message(msg("salut", channel="C777", guild="G"))
+        assert rest.sent == [] and h.created == []
     run(go())
 
 

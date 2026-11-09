@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from . import fmt
+from . import fmt, layout
 from .discord_api import DiscordError, Gateway, Rest
 from .harness import Harness, HarnessError
 from .store import Store
@@ -33,6 +33,7 @@ class Pending:
     in_dm: bool
     thread: str = ""                   # a thread made by hand: it becomes the session's thread
     title: str = ""
+    project: str = ""                 # restricts the topic menu to that project
     at: float = field(default_factory=time.time)
 
 
@@ -62,9 +63,10 @@ class Bot:
         self.pending: dict[str, Pending] = {}
         self.followers: dict[str, Follower] = {}
         self.msg_session: OrderedDict[str, str] = OrderedDict()     # bot message id -> session (DM replies)
-        self.main = settings["channel_id"]
         self.owner = settings["owner_id"]
         self.dm_channel = store.data.get("dm_channel", "")
+        self.lay: dict = store.data.setdefault("layout", {})
+        self.sync_task: asyncio.Task | None = None
 
     def t(self, key: str, **kw: Any) -> str:
         s = T[self.lang].get(key) or T["en"][key]
@@ -86,7 +88,33 @@ class Bot:
 
     async def on_ready(self) -> None:
         await self.rest.register_commands(self.gw.app_id, await self.commands())
-        log.info("ready: commands registered, owner %s, channel %s", self.owner, self.main or "(DM only)")
+        await self.sync_layout()
+        if not self.sync_task:
+            self.sync_task = asyncio.create_task(self._sync_loop())
+        log.info("ready: commands registered, owner %s, %d project channels", self.owner, len(self.lay.get("projects", {})))
+
+    async def _sync_loop(self) -> None:
+        while True:
+            await asyncio.sleep(600)
+            try:
+                await self.sync_layout()
+            except Exception:  # noqa: BLE001
+                log.exception("layout sync")
+
+    async def sync_layout(self) -> None:
+        guild = await layout.pick_guild(self.rest, self.cfg.get("guild_id", ""))
+        if not guild:
+            log.warning("the bot is in several servers: set guild_id in config.json")
+            return
+        projects = [{"name": p["name"], "emoji": p.get("emoji") or ""} for p in await self.h.tree()]
+        await layout.ensure(self.rest, self.lay, guild, self.owner, self.gw.user_id, projects, self.lang)
+        self.store.save()
+
+    def project_of(self, channel: str) -> str:
+        for name, cid in self.lay.get("projects", {}).items():
+            if cid == str(channel):
+                return name
+        return ""
 
     async def dispatch(self, name: str, d: dict) -> None:
         if name == "MESSAGE_CREATE":
@@ -146,32 +174,42 @@ class Bot:
             if sid:
                 return await self.forward(sid, m, ch)
             return await self.ask_topic(m, ch, in_dm=True)
-        if ch == self.main:
+        if self.project_of(ch):
             return await self.ask_topic(m, ch, in_dm=False)
-        try:                                                  # a thread made by hand under the main channel
+        try:                                                  # a thread made by hand under a project channel
             info = await self.rest.channel(ch)
         except DiscordError:
             return
-        if info.get("type") in (11, 12) and info.get("parent_id") == self.main and self.main:
+        if info.get("type") in (11, 12) and self.project_of(info.get("parent_id", "")):
             await self.ask_topic(m, ch, in_dm=False, thread=ch)
 
     async def ask_topic(self, m: dict, channel: str, in_dm: bool, thread: str = "") -> None:
         pid = secrets.token_hex(4)
         self.purge()
-        self.pending[pid] = Pending(text=m.get("content", ""), files=m.get("attachments", []), channel=channel,
-                                    message=m["id"], in_dm=in_dm, thread=thread)
+        project = self.project_of(channel)
+        if thread:
+            try:
+                project = self.project_of((await self.rest.channel(thread)).get("parent_id", ""))
+            except DiscordError:
+                pass
+        p = self.pending[pid] = Pending(text=m.get("content", ""), files=m.get("attachments", []), channel=channel,
+                                        message=m["id"], in_dm=in_dm, thread=thread, project=project)
+        only = [x for x in await self.topics() if x["project"] == project] if project else []
+        if len(only) == 1:                                      # one topic in that project: no question
+            del self.pending[pid]
+            return await self.start(p, only[0]["path"])
         await self.send_menu(pid, channel, m["id"])
 
     async def send_menu(self, pid: str, channel: str, reply_to: str | None) -> None:
-        topics = await self.topics()
-        cont = ""
         p = self.pending[pid]
+        topics = [x for x in await self.topics() if not p.project or x["project"] == p.project]
+        cont = ""
         if p.in_dm and self.store.data.get("dm_current"):
             try:
                 cont = (await self.h.session(self.store.data["dm_current"]))["title"] or "…"
             except HarnessError:
                 cont = ""
-        comps = self.menu(pid, topics, projects=len({x["project"] for x in topics}) > 0 and len(topics) > 25, cont=cont)
+        comps = self.menu(pid, topics, projects=len(topics) > 25, cont=cont)
         await self.rest.send(channel, self.t("where"), components=comps, reply_to=reply_to)
 
     def purge(self) -> None:
@@ -214,16 +252,19 @@ class Bot:
             if p.thread:
                 out = p.thread
             else:
-                name = f"{path.split('projects/', 1)[-1].replace('/topics/', '/')} · {s.get('title') or self.t('working')}"
-                th = await self.rest.start_thread(p.channel, name, p.message or None)
+                th = await self.rest.start_thread(p.channel, self.thread_name(path, s.get("title") or self.t("working")), p.message or None)
                 out = th["id"]
-            self.store.link(sid, out, path)
+            self.store.link(sid, out, path, parent=p.channel)
         else:
             self.store.set_dm(sid, p.channel)
         if p.text or files or voice:
             await self.follow(sid, out, 0, 1)
         else:
             await self.rest.send(out, self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")))
+
+    @staticmethod
+    def thread_name(path: str, title: str) -> str:
+        return f"{path.split('/topics/', 1)[-1]} · {title}"[:100]
 
     async def forward(self, sid: str, m: dict, channel: str) -> None:
         try:
@@ -373,9 +414,8 @@ class Bot:
         except HarnessError:
             return
         if s.get("title"):
-            name = f"{link['path'].split('projects/', 1)[-1].replace('/topics/', '/')} · {s['title']}"
             try:
-                await self.rest.rename(link["channel"], name)
+                await self.rest.rename(link["channel"], self.thread_name(link["path"], s["title"]))
             except DiscordError:
                 return
             link["titled"] = True
@@ -474,16 +514,17 @@ class Bot:
         pid = secrets.token_hex(4)
         self.purge()
         if sid:                                                # inside a session's thread: same topic, new session
-            path = self.store.data["threads"][sid]["path"]
-            main = self.main or ch
+            link = self.store.data["threads"][sid]
+            path = link["path"]
             await self.rest.respond(i, 5, ephemeral=True)
-            p = Pending(text="", files=[], channel=main, message="", in_dm=False, title=title)
+            p = Pending(text="", files=[], channel=link.get("parent") or ch, message="", in_dm=False, title=title)
             await self.start(p, path)
             return await self.rest.followup(i, self.gw.app_id, self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")), ephemeral=True)
-        if not in_dm and ch != self.main:
+        project = self.project_of(ch)
+        if not in_dm and not project:
             return await self.rest.respond(i, 4, self.t("no_session"), ephemeral=True)
-        self.pending[pid] = Pending(text="", files=[], channel=ch, message="", in_dm=in_dm, title=title)
-        topics = await self.topics()
+        self.pending[pid] = Pending(text="", files=[], channel=ch, message="", in_dm=in_dm, title=title, project=project)
+        topics = [x for x in await self.topics() if not project or x["project"] == project]
         await self.rest.respond(i, 4, self.t("where"), components=self.menu(pid, topics, projects=len(topics) > 25))
 
     async def cmd_sessions(self, i: dict, reply) -> None:
@@ -506,7 +547,9 @@ class Bot:
             return await self.rest.send(channel, self.t("opened", title=s.get("title") or "…", where=self.t("hint_dm")))
         th = self.store.channel_of(sid)
         if not th:
-            name = f"{s['path'].split('projects/', 1)[-1].replace('/topics/', '/')} · {s.get('title') or '…'}"
-            th = (await self.rest.start_thread(self.main or channel, name))["id"]
-            self.store.link(sid, th, s["path"])
+            parent = self.lay.get("projects", {}).get(s["path"].split("/")[1] if s["path"].startswith("projects/") else "")
+            if not parent:
+                return await self.rest.send(channel, self.t("err", e="no channel for this project"))
+            th = (await self.rest.start_thread(parent, self.thread_name(s["path"], s.get("title") or "…")))["id"]
+            self.store.link(sid, th, s["path"], parent=parent)
         await self.rest.send(channel, self.t("opened", title=s.get("title") or "…", where=f"<#{th}>"))
