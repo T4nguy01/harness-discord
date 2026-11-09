@@ -8,6 +8,7 @@ VENV="${HD_VENV:-/var/lib/claude-maxxing/harness-discord-venv}"      # outside t
 command -v uv >/dev/null || { echo "uv is needed (it comes with Harness Maxxing)"; exit 1; }
 [ -d "$VENV" ] || uv venv -q "$VENV"
 uv pip install -q --python "$VENV/bin/python" "$DIR"
+rm -rf "$DIR/build" "$DIR"/*.egg-info
 sed -e "s#@DIR@#$DIR#g" -e "s#@VENV@#$VENV#g" "$DIR/harness-discord.service.in" > /etc/systemd/system/harness-discord.service
 systemctl daemon-reload
 systemctl enable --now harness-discord
