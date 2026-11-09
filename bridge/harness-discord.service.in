@@ -1,0 +1,16 @@
+[Unit]
+Description=Harness Discord bridge (talk to Harness Maxxing sessions from Discord)
+After=network-online.target claude-maxxing.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/.venv/bin/python -m harness_discord
+Restart=always
+RestartSec=5
+# Keys (DISCORD_BOT_TOKEN, HARNESS_PASSWORD) are read from the Harness Keys vault with `maxxing keys get`.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

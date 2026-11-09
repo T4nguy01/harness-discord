@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: harness-discord
+Version: 0.1.0
+Summary: Talk to your Harness Maxxing sessions from Discord.
+License: MIT
+Requires-Python: >=3.11
+Requires-Dist: httpx>=0.27
+Requires-Dist: websockets>=13
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
