@@ -53,11 +53,21 @@ Test: write in a project channel, or press **Send a test message** on the Discor
 ## Remove
 
 `systemctl disable --now harness-discord && rm /etc/systemd/system/harness-discord.service`, delete
-`<workspace>/extensions/discord/` and the virtualenv `/var/lib/claude-maxxing/harness-discord-venv`, then delete the
+`<workspace>/extensions/discord/` and the virtualenv `/var/lib/claude-maxxing/harness-discord-venv`, then `systemctl daemon-reload`, delete the state folder
+`/var/lib/claude-maxxing/extensions/discord/` and the skill link `<workspace>/.claude/skills/discord-bridge`, then delete the
 Discord categories and the bot from the server and the two keys from Settings -> Keys.
+
+## Limits and security
+
+- The bridge creates, moves and deletes **its own** categories and channels (Harness, Projects) on the server you give it, and can archive session threads. Use a **personal server** you own; only the owner id set in the page can talk to it.
+- It signs in to the Harness API as you with `HARNESS_PASSWORD`, so it has owner rights: **2FA must stay off**, and anyone who controls the Discord owner account or the bot token controls your sessions.
+- `install.sh` must run as root: it writes `/etc/systemd/system/harness-discord.service` (hardened unit) and runs `systemctl`. The page's "Restart the bridge" button asks for confirmation.
+- `reply_mode`: `live` (the answer is edited as it streams) or `final` (one message at the end).
+- Attachments are fetched only from Discord's CDN, capped at 25 MB.
+- The skill link (`ln -s`) points to this clone: keep the clone where it is.
 
 ## Develop
 
-`discord/bridge/` is a small Python package (`httpx`, `websockets`); tests: `cd discord/bridge && pip install -e '.[dev]' && pytest`.
+`discord/bridge/` is a small Python package (`httpx`, `websockets`); tests: from the repo root, `pip install -e discord/bridge pytest && pytest`.
 
 MIT licence.

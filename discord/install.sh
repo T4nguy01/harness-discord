@@ -9,7 +9,8 @@ command -v uv >/dev/null || { echo "uv is needed (it comes with Harness Maxxing)
 [ -d "$VENV" ] || uv venv -q "$VENV"
 uv pip install -q --python "$VENV/bin/python" "$DIR"
 rm -rf "$DIR/build" "$DIR"/*.egg-info
-sed -e "s#@DIR@#$DIR#g" -e "s#@VENV@#$VENV#g" "$DIR/harness-discord.service.in" > /etc/systemd/system/harness-discord.service
+python3 -c 'import sys; t = open(sys.argv[1]).read(); print(t.replace("@DIR@", sys.argv[2]).replace("@VENV@", sys.argv[3]), end="")' \
+  "$DIR/harness-discord.service.in" "$DIR" "$VENV" > /etc/systemd/system/harness-discord.service
 systemctl daemon-reload
 systemctl enable --now harness-discord
 echo "harness-discord started: systemctl status harness-discord"

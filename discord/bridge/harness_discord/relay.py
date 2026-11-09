@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -16,6 +17,7 @@ from .harness import HarnessError
 
 log = logging.getLogger("harness_discord.relay")
 
+SAFE_ID = re.compile(r"[\w-]{1,32}")
 LEVEL = {"info": "ℹ️", "success": "✅", "warning": "⚠️", "error": "🛑"}
 STYLE = {"primary": 1, "default": 2, "danger": 4}
 QUIET = ("info", "success")
@@ -42,10 +44,12 @@ def render(e: dict, web_url: str) -> tuple[str, list[dict]]:
         text += f"\n— *{e.get('resolution') or '✓'}*"
     buttons = []
     for a in e.get("actions") or []:
+        if not SAFE_ID.fullmatch(str(a.get("id", ""))):
+            continue
         if a["id"] == "open":
             url = e.get("url") or ""
             url = web_url + url if url.startswith("/") else url
-            if url.startswith("http"):
+            if url.startswith(web_url + "/"):                       # only links into Harness itself
                 buttons.append({"type": 2, "style": 5, "label": a["label"][:80], "url": url})
             continue
         buttons.append({"type": 2, "style": STYLE.get(a.get("style"), 2), "label": a["label"][:80],
@@ -88,6 +92,8 @@ class Relay:
     def reload(self) -> None:
         """Settings changed in the Harness page apply without a restart."""
         new = config.load_settings()
+        if not new["owner_id"]:                                  # never go from an owner to nobody on a bad read
+            new["owner_id"] = self.bot.owner
         self.bot.cfg.update(new)
         self.bot.owner = self.bot.cfg["owner_id"]
 
@@ -154,6 +160,8 @@ class Relay:
         self.bot.store.save()
 
     async def act(self, eid: int, action: str) -> dict:
+        if not SAFE_ID.fullmatch(action):
+            raise HarnessError(400, "bad_action")
         d = await self.bot.h.request("POST", f"/api/feed/{eid}/act/{action}")
         return d.get("event", d)
 

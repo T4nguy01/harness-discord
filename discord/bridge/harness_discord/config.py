@@ -13,7 +13,7 @@ def key(name: str) -> str | None:
     if v:
         return v.strip()
     try:
-        r = subprocess.run(["maxxing", "keys", "get", name], capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["maxxing", "keys", "get", name], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return r.stdout.strip() or None if r.returncode == 0 else None
@@ -53,7 +53,9 @@ def load_settings() -> dict:
     f = state_dir() / "config.json"
     d = dict(DEFAULTS)
     try:
-        d.update(json.loads(f.read_text()))
+        raw = json.loads(f.read_text())
+        if isinstance(raw, dict):
+            d.update(raw)
     except (OSError, ValueError):
         pass
     if os.environ.get("DISCORD_OWNER_ID"):

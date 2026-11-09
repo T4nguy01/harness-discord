@@ -18,6 +18,3 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["harness_discord"]
-
-[tool.pytest.ini_options]
-pythonpath = ["."]

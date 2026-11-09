@@ -9,7 +9,7 @@ The bridge is a service (`harness-discord`) that signs in to Harness like the ow
 (settings, status) in `<workspace>/extensions/discord/`. Secrets live only in Settings -> Keys:
 `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (never print them, never write them in a file or a message).
 Settings (not secret): `<state>/extensions/discord/config.json` (`owner_id`, `guild_id`, `reply_mode`, `relay_feed`,
-`relay_agents`); status: `status.json` next to it. The Discord page edits them; a change applies within 10 s.
+`relay_agents`, `relay_bell`); status: `status.json` next to it. The Discord page edits them; a change applies within 10 s.
 
 ## Set up (the user does the Discord side)
 1. Discord developer portal: new application -> Bot -> enable "Message Content Intent" -> copy the token.

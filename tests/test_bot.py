@@ -1,3 +1,4 @@
+import pytest
 """Offline tests of the bridge logic with a fake Harness and a fake Discord."""
 import asyncio
 
@@ -244,3 +245,15 @@ def test_gone_session_is_unlinked(tmp_path):
         assert bot.store.session_of_channel("T9") is None
         assert "n'existe plus" in rest.sent[0]["content"]
     run(go())
+
+
+def test_download_allowlist_refuses_other_hosts():
+    import asyncio
+    from harness_discord.discord_api import DiscordError, Rest
+
+    async def go(url):
+        with pytest.raises(DiscordError):
+            await Rest("t").download(url)
+
+    for url in ("http://cdn.discordapp.com/a", "https://evil.example/a", "https://127.0.0.1/a"):
+        asyncio.run(go(url))

@@ -103,6 +103,7 @@ export function mount(el, ctx) {
   };
   const act = async (e) => {
     const b = e.target.closest("[data-act]"); if (!b) return;
+    if (b.dataset.act === "restart" && !confirm(L.restart + " ?")) return;
     try { await ctx.api("action", { method: "POST", body: { action: b.dataset.act } }); msg(L.done); } catch (err) { msg(String(err.message || err)); }
   };
   $(".save").addEventListener("click", save);

@@ -6,3 +6,4 @@ state/
 .env
 build/
 *.egg-info/
+.pytest_cache/

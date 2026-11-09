@@ -13,3 +13,11 @@ def fast_sleep(monkeypatch):
 
     monkeypatch.setattr(asyncio, "sleep", quick)
     monkeypatch.setattr("random.uniform", lambda a, b: 0.01)
+
+
+@pytest.fixture(autouse=True)
+def local_cdn(request, monkeypatch):
+    """Integration tests download from a local fake CDN; the host allow-list has its own test."""
+    if "allowlist" not in request.node.name:
+        from harness_discord.discord_api import Rest
+        monkeypatch.setattr(Rest, "CDN_ONLY", False)

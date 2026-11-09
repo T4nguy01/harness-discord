@@ -7,6 +7,7 @@ import logging
 import random
 import time
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 import httpx
 import websockets
@@ -166,13 +167,23 @@ class Rest:
             body["flags"] = 64
         await self.call("POST", f"/webhooks/{app_id}/{interaction['token']}", json=body)
 
+    CDN_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
+    CDN_ONLY = True                                            # tests switch it off to reach a local fake CDN
+
     async def download(self, url: str, limit: int = 25 * 1024 * 1024) -> bytes:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-            r = await c.get(url)
-            r.raise_for_status()
-            if len(r.content) > limit:
-                raise DiscordError(413, "attachment too large")
-            return r.content
+        """Fetch an attachment from Discord's CDN only (no other host, no redirect), stopping at `limit` bytes."""
+        u = urlparse(url)
+        if self.CDN_ONLY and (u.scheme != "https" or u.hostname not in self.CDN_HOSTS):
+            raise DiscordError(400, "attachment host not allowed")
+        async with httpx.AsyncClient(timeout=60, follow_redirects=False) as c:
+            async with c.stream("GET", url) as r:
+                r.raise_for_status()
+                buf = bytearray()
+                async for chunk in r.aiter_bytes():
+                    buf += chunk
+                    if len(buf) > limit:
+                        raise DiscordError(413, "attachment too large")
+                return bytes(buf)
 
 
 Handler = Callable[[str, dict], Awaitable[None]]
@@ -193,6 +204,7 @@ class Gateway:
         self.app_id = ""
         self.user_id = ""
         self._stop = False
+        self._tasks: set[asyncio.Task] = set()      # keep references: a task nobody holds can be collected early
 
     def stop(self) -> None:
         self._stop = True
@@ -260,7 +272,9 @@ class Gateway:
                             self.ready.set()
                         elif t == "RESUMED":
                             self.ready.set()
-                        asyncio.create_task(self._dispatch(t, d))
+                        task = asyncio.create_task(self._dispatch(t, d))
+                        self._tasks.add(task)
+                        task.add_done_callback(self._tasks.discard)
             finally:
                 hb.cancel()
 

@@ -185,7 +185,7 @@ class Bot:
             self.dm_channel = ch
             ref = (m.get("message_reference") or {}).get("message_id")
             sid = self.msg_session.get(ref or "")
-            if sid:
+            if sid and not sid.startswith("agent:"):
                 return await self.forward(sid, m, ch)
             return await self.ask_topic(m, ch, in_dm=True)
         if self.project_of(ch):
@@ -464,12 +464,17 @@ class Bot:
                 proj = v[2:]
                 topics = [x for x in await self.topics() if x["project"] == proj]
                 return await self.rest.respond(i, 7, self.t("where"), components=self.menu(pid, topics))
+            if v not in {x["path"] for x in await self.topics()}:         # only a topic that really exists
+                return await self.rest.respond(i, 7, self.t("expired"), components=[])
             self.pending.pop(pid, None)
             label = v.split("projects/", 1)[-1].replace("/topics/", "/")
             await self.rest.respond(i, 7, f"✅ {label}", components=[])
             return await self.start(p, v)
         if kind == "fa":                                       # a feed alert button: Allow / Deny / Seen...
-            _, eid, action = i["data"]["custom_id"].split(":")
+            parts = i["data"]["custom_id"].split(":", 2)
+            if len(parts) != 3 or not parts[1].isdigit():
+                return await self.rest.respond(i, 4, self.t("expired"), ephemeral=True)
+            _, eid, action = parts
             try:
                 e = await self.relay.act(int(eid), action)
             except HarnessError as err:

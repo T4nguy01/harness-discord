@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, AsyncIterator
 
 import httpx
@@ -98,7 +99,7 @@ class Harness:
         return await self.request("PATCH", f"/api/sessions/{sid}", json={"model": model})
 
     async def upload(self, path: str, name: str, data: bytes, mime: str = "application/octet-stream") -> str:
-        d = await self.request("POST", "/api/uploads", params={"path": path}, files={"file": (name, data, mime)})
+        d = await self.request("POST", "/api/uploads", params={"path": path}, files={"file": (os.path.basename(name) or "file", data, mime)})
         return d["files"][0]["path"]
 
     async def tail(self, sid: str) -> int:

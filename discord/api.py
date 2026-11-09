@@ -92,7 +92,7 @@ def handle(ctx, method, path, query, body):
             (d / f"{act}.flag").write_text(str(time.time()))
             return {"ok": True}
         if act == "restart":
-            r = subprocess.run(["systemctl", "restart", SERVICE], capture_output=True, text=True, timeout=20)
+            r = subprocess.run(["systemctl", "restart", SERVICE], capture_output=True, text=True, timeout=10)
             return {"ok": r.returncode == 0, "error": r.stderr.strip()[:200]}
         return 400, {"error": "bad_action", "message": "action: sync, test or restart."}
     return 404, {"error": "not_found", "message": path}
