@@ -45,6 +45,7 @@ def _status(ctx):
         "connected": bool(st.get("connected")) and age is not None and age < 90,
         "running": st.get("running", 0),
         "version": st.get("version", ""),
+        "error": str(st.get("error", ""))[:300],
         "keys": {"token": bool(ctx["secret"]("DISCORD_BOT_TOKEN")), "password": bool(ctx["secret"]("HARNESS_PASSWORD"))},
         "config": {
             "owner_id": str(cfg.get("owner_id", "")),
@@ -83,7 +84,9 @@ def handle(ctx, method, path, query, body):
             cfg["reply_mode"] = body["reply_mode"]
         for k in ("relay_feed", "relay_agents", "relay_bell"):
             if k in body:
-                cfg[k] = bool(body[k])
+                if not isinstance(body[k], bool):
+                    return 400, {"error": "bad_flag", "message": f"{k}: true or false."}
+                cfg[k] = body[k]
         _write(d / "config.json", cfg)
         return _status(ctx)
     if method == "POST" and path == "action":

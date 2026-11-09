@@ -24,7 +24,10 @@ class R:
 
     async def modify_channel(self, cid, **f):
         self.moved.append((cid, f))
-        self.ch[cid]["parent_id"] = f.get("parent_id")
+        if "parent_id" in f:
+            self.ch[cid]["parent_id"] = f["parent_id"]
+        if "permission_overwrites" in f:
+            self.ch[cid]["permission_overwrites"] = f["permission_overwrites"]
         return {}
 
 

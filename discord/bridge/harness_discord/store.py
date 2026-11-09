@@ -12,16 +12,36 @@ class Store:
     def __init__(self, path: Path):
         self.path = path
         self.data: dict[str, Any] = {"threads": {}, "dm_current": "", "dm_channel": ""}
+        self.damaged = False                       # state.json existed but could not be read: the layout may be lost
+        self._saved = ""                           # JSON of the last write: save() does nothing when nothing changed
         try:
-            self.data.update(json.loads(path.read_text()))
-        except (OSError, ValueError):
-            pass
+            raw = path.read_text()
+        except OSError:
+            raw = None
+        if raw is not None:
+            try:
+                loaded = json.loads(raw)
+                if not isinstance(loaded, dict):
+                    raise ValueError("not an object")
+                self.data.update(loaded)
+            except ValueError:
+                self.damaged = True
+                try:                               # keep the broken file: it may be repairable by hand
+                    (path.parent / (path.name + ".bak")).write_text(raw)
+                except OSError:
+                    pass
 
     def save(self) -> None:
+        blob = json.dumps(self.data)
+        if blob == self._saved:
+            return
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".state-")
         with os.fdopen(fd, "w") as f:
-            json.dump(self.data, f)
+            f.write(blob)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, self.path)
+        self._saved = blob
 
     # session id -> {"channel": thread id, "path": topic path}
     def link(self, sid: str, channel: str, path: str, parent: str = "") -> None:

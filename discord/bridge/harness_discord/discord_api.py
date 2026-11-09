@@ -16,6 +16,11 @@ log = logging.getLogger("harness_discord.discord")
 API = "https://discord.com/api/v10"
 NO_MENTIONS = {"parse": []}
 
+STABLE_AFTER = 30.0           # a connection that lasted this long resets the reconnect delay
+# gateway close codes after which retrying is pointless: authentication failed, bad shard, bad / disallowed intents
+FATAL_CLOSE = {4004: "invalid bot token", 4010: "invalid shard", 4011: "sharding required", 4012: "invalid API version",
+               4013: "invalid intents", 4014: "disallowed intents (enable MESSAGE CONTENT in the Developer Portal)"}
+
 # intents: guilds, guild messages, direct messages, message content
 INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)
 
@@ -24,6 +29,11 @@ class DiscordError(Exception):
     def __init__(self, status: int, body: Any):
         super().__init__(f"discord {status}: {str(body)[:200]}")
         self.status, self.body = status, body
+
+    @property
+    def transient(self) -> bool:
+        """Worth retrying later: network error (0), rate limit, Discord server error."""
+        return self.status in (0, 429) or self.status >= 500
 
 
 class Rest:
@@ -34,17 +44,40 @@ class Rest:
     async def close(self) -> None:
         await self.http.aclose()
 
+    @staticmethod
+    def _idempotent(method: str, path: str) -> bool:
+        """A message POST is never replayed after a 5xx or a network error: it may already be posted (duplicate)."""
+        return not (method == "POST" and (path.endswith("/messages") or path.startswith("/webhooks/")))
+
+    @staticmethod
+    def _retry_after(r: httpx.Response) -> float:
+        """Seconds to wait after a 429: JSON `retry_after`, else the Retry-After header, else 1."""
+        for get in (lambda: r.json()["retry_after"], lambda: r.headers["retry-after"]):
+            try:
+                return max(0.0, float(get()))
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+        return 1.0
+
     async def call(self, method: str, path: str, **kw: Any) -> Any:
-        for _ in range(4):
-            r = await self.http.request(method, path, **kw)
+        safe = self._idempotent(method, path)
+        tries = 4
+        for n in range(tries):
+            last = n == tries - 1
+            try:
+                r = await self.http.request(method, path, **kw)
+            except httpx.TransportError as e:                  # includes timeouts
+                if not safe or last:
+                    raise DiscordError(0, f"network: {type(e).__name__}") from e
+                await asyncio.sleep(min(2 ** n, 8))
+                continue
             if r.status_code == 429:
-                try:
-                    wait = float(r.json().get("retry_after", 1))
-                except (ValueError, AttributeError):
-                    wait = 1.0
+                wait = self._retry_after(r)
+                if last:
+                    break
                 await asyncio.sleep(min(wait, 30) + 0.1)
                 continue
-            if r.status_code >= 500:
+            if r.status_code >= 500 and safe and not last:
                 await asyncio.sleep(1)
                 continue
             break
@@ -174,6 +207,18 @@ class Rest:
             body["flags"] = 64
         await self.call("POST", f"/webhooks/{app_id}/{interaction['token']}", json=body)
 
+    async def edit_original(self, interaction: dict, app_id: str, content: str | None = None, components: list | None = None,
+                            embeds: list | None = None) -> None:
+        """Fill in the answer of an interaction already acknowledged (deferred, or a type 7 placeholder)."""
+        body: dict[str, Any] = {"allowed_mentions": NO_MENTIONS}
+        if content is not None:
+            body["content"] = content
+        if components is not None:
+            body["components"] = components
+        if embeds is not None:
+            body["embeds"] = embeds
+        await self.call("PATCH", f"/webhooks/{app_id}/{interaction['token']}/messages/@original", json=body)
+
     CDN_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
     CDN_ONLY = True                                            # tests switch it off to reach a local fake CDN
 
@@ -211,6 +256,7 @@ class Gateway:
         self.app_id = ""
         self.user_id = ""
         self._stop = False
+        self.fatal = ""                              # set when Discord closes with a code retrying cannot fix
         self._tasks: set[asyncio.Task] = set()      # keep references: a task nobody holds can be collected early
 
     def stop(self) -> None:
@@ -219,14 +265,30 @@ class Gateway:
     async def run(self) -> None:
         delay = 1.0
         while not self._stop:
+            t0 = time.monotonic()
+            err: Exception | None = None
             try:
                 await self._connect()
-                delay = 1.0
             except asyncio.CancelledError:
                 raise
+            except websockets.ConnectionClosed as e:
+                rcvd = getattr(e, "rcvd", None)
+                code = rcvd.code if rcvd is not None else getattr(e, "code", None)
+                if code in FATAL_CLOSE:
+                    self.fatal = f"gateway closed with {code}: {FATAL_CLOSE[code]}"
+                    log.error("%s - not retrying", self.fatal)
+                    self.ready.clear()
+                    return
+                err = e
             except Exception as e:  # noqa: BLE001
-                log.warning("gateway: %s (reconnecting in %.0fs)", e, delay)
+                err = e
             self.ready.clear()
+            if err is None or time.monotonic() - t0 > STABLE_AFTER:      # a connection that held for a while: start over at 1 s
+                delay = 1.0
+            if err is not None:
+                log.warning("gateway: %s (reconnecting in %.0fs)", err, delay)
+            if self._stop:
+                break
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
 
@@ -265,11 +327,13 @@ class Gateway:
                     elif op == 1:
                         await ws.send(json.dumps({"op": 1, "d": self.seq}))
                     elif op == 7:                              # reconnect asked by Discord
+                        await ws.close(4000)               # not 1000: that would invalidate the session (RESUME stays possible)
                         return
                     elif op == 9:                              # invalid session
                         if not m.get("d"):
                             self.session_id, self.seq, self.resume_url = None, None, None
                         await asyncio.sleep(random.uniform(1, 5))
+                        await ws.close(4000)
                         return
                     elif op == 0:
                         t, d = m["t"], m["d"]

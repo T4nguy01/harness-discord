@@ -24,6 +24,13 @@ ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=true
 LockPersonality=true
+UMask=0077
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+MemoryMax=512M
 
 [Install]
 WantedBy=multi-user.target

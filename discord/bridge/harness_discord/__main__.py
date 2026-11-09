@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
 import sys
+import time
 
 from . import config
 from .bot import Bot
 from .discord_api import Gateway, Rest
+from . import __version__
 from .harness import Harness, HarnessError
 from .store import Store
 
@@ -23,7 +26,11 @@ async def amain() -> int:
         log.error("missing DISCORD_BOT_TOKEN, HARNESS_PASSWORD or the owner id (owner_id in config.json or DISCORD_OWNER_ID)")
         return 2
     url = config.harness_url()
-    h = Harness(url, password)
+    try:
+        h = Harness(url, password)
+    except ValueError as e:                                  # plain http to a remote host: the password would travel in clear
+        log.error("%s", e)
+        return 2
     try:
         await h.login()
     except (HarnessError, Exception) as e:  # noqa: BLE001
@@ -44,14 +51,34 @@ async def amain() -> int:
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
-    await gw.ready.wait()
-    await bot.on_ready()
-    await stop.wait()
+    ready = asyncio.create_task(gw.ready.wait())
+    await asyncio.wait({ready, task}, return_when=asyncio.FIRST_COMPLETED)     # the gateway task ends on a fatal close
+    code = 0
+    if gw.fatal:
+        write_error(gw.fatal)
+        code = 4
+    elif ready.done():
+        await bot.on_ready()
+        stopper = asyncio.create_task(stop.wait())
+        await asyncio.wait({stopper, task}, return_when=asyncio.FIRST_COMPLETED)
+        if gw.fatal:
+            write_error(gw.fatal)
+            code = 4
+    ready.cancel()
     gw.stop()
     task.cancel()
     await rest.close()
     await h.close()
-    return 0
+    return code
+
+
+def write_error(message: str) -> None:
+    """status.json tells the Harness page why the bridge is not connected."""
+    try:
+        (config.state_dir() / "status.json").write_text(json.dumps(
+            {"at": time.time(), "version": __version__, "connected": False, "error": message}))
+    except OSError:
+        pass
 
 
 def main() -> None:

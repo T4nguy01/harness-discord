@@ -2,6 +2,10 @@
 T = {
     "en": {
         "where": "In which topic?",
+        "truncated": "… truncated, see the web interface.",
+        "menu_cut": "(only the first {n} are shown)",
+        "refused_here": "This command works in a DM or a project channel.",
+        "start_failed": "Session started but the thread could not be created: use /sessions to open it.",
         "where_project": "Which project?",
         "pick_ph": "Choose a topic…",
         "pick_project_ph": "Choose a project…",
@@ -40,6 +44,10 @@ T = {
     },
     "fr": {
         "where": "Dans quel topic ?",
+        "truncated": "… tronqué, voir l'interface web.",
+        "menu_cut": "(seuls les {n} premiers sont affichés)",
+        "refused_here": "Cette commande marche en message privé ou dans un salon de projet.",
+        "start_failed": "Session démarrée mais le fil n'a pas pu être créé : ouvre-la avec /sessions.",
         "where_project": "Quel projet ?",
         "pick_ph": "Choisir un topic…",
         "pick_project_ph": "Choisir un projet…",

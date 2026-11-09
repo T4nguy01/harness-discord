@@ -1,10 +1,14 @@
 """Client of the Harness Maxxing HTTP API (docs/dev/API.md): sign in once, keep the cookie, sign in again on a 401."""
 from __future__ import annotations
 
+import ipaddress
+from contextlib import aclosing
 import json
 import logging
 import os
+import re
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
 import httpx
 
@@ -17,8 +21,37 @@ class HarnessError(Exception):
         self.status, self.code, self.message = status, code, message
 
 
+SID = re.compile(r"[\w-]{1,64}", re.ASCII)
+
+
+def check_sid(sid: str) -> str:
+    """A session id goes into URL paths: only plain id characters."""
+    if not isinstance(sid, str) or not SID.fullmatch(sid):
+        raise HarnessError(400, "bad_session_id")
+    return sid
+
+
+def check_url(url: str) -> None:
+    """The password is sent to this URL: plain http only on this machine or inside the tailnet."""
+    u = urlparse(url)
+    if u.scheme == "https":
+        return
+    host = (u.hostname or "").lower()
+    if u.scheme == "http":
+        if host in ("localhost", "127.0.0.1", "::1") or host.endswith(".ts.net"):
+            return
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip in ipaddress.ip_network("100.64.0.0/10") or ip.is_loopback:
+                return
+        except ValueError:
+            pass
+    raise ValueError(f"refusing to send the Harness password over {u.scheme}://{host}: use https, localhost or a tailnet address")
+
+
 class Harness:
     def __init__(self, base_url: str, password: str, transport: httpx.AsyncBaseTransport | None = None):
+        check_url(base_url)
         self.base = base_url.rstrip("/")
         self.password = password
         self.http = httpx.AsyncClient(base_url=self.base, headers={"X-Maxxing": "1"}, timeout=30, transport=transport)
@@ -28,7 +61,10 @@ class Harness:
         await self.http.aclose()
 
     async def login(self) -> None:
-        r = await self.http.post("/api/auth/login", json={"password": self.password})
+        try:
+            r = await self.http.post("/api/auth/login", json={"password": self.password})
+        except httpx.HTTPError as e:
+            raise HarnessError(0, "unreachable", type(e).__name__) from e
         d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.status_code != 200 or not d.get("ok"):
             if d.get("two_factor"):
@@ -40,7 +76,10 @@ class Harness:
         for attempt in (1, 2):
             if not self._signed:
                 await self.login()
-            r = await self.http.request(method, path, **kw)
+            try:
+                r = await self.http.request(method, path, **kw)
+            except httpx.HTTPError as e:
+                raise HarnessError(0, "unreachable", type(e).__name__) from e
             if r.status_code == 401 and attempt == 1:
                 self._signed = False
                 continue
@@ -66,7 +105,7 @@ class Harness:
         return await self.request("GET", "/api/sessions", params={"path": path} if path else None)
 
     async def session(self, sid: str) -> dict:
-        return await self.request("GET", f"/api/sessions/{sid}")
+        return await self.request("GET", f"/api/sessions/{check_sid(sid)}")
 
     async def create_session(self, path: str, message: str = "", attachments: list[str] | None = None,
                              voice: str | None = None, title: str = "") -> dict:
@@ -87,16 +126,16 @@ class Harness:
             body["attachments"] = attachments
         if voice:
             body["voice"] = voice
-        return await self.request("POST", f"/api/sessions/{sid}/messages", json=body)
+        return await self.request("POST", f"/api/sessions/{check_sid(sid)}/messages", json=body)
 
     async def stop(self, sid: str) -> None:
-        await self.request("POST", f"/api/sessions/{sid}/stop")
+        await self.request("POST", f"/api/sessions/{check_sid(sid)}/stop")
 
     async def archive(self, sid: str) -> dict:
-        return await self.request("PATCH", f"/api/sessions/{sid}", json={"archived": True})
+        return await self.request("PATCH", f"/api/sessions/{check_sid(sid)}", json={"archived": True})
 
     async def set_model(self, sid: str, model: str) -> dict:
-        return await self.request("PATCH", f"/api/sessions/{sid}", json={"model": model})
+        return await self.request("PATCH", f"/api/sessions/{check_sid(sid)}", json={"model": model})
 
     async def upload(self, path: str, name: str, data: bytes, mime: str = "application/octet-stream") -> str:
         d = await self.request("POST", "/api/uploads", params={"path": path}, files={"file": (os.path.basename(name) or "file", data, mime)})
@@ -104,14 +143,22 @@ class Harness:
 
     async def tail(self, sid: str) -> int:
         """Offset of the end of the session log (where to start following)."""
-        d = await self.request("GET", f"/api/sessions/{sid}/events", params={"tail": 1})
+        d = await self.request("GET", f"/api/sessions/{check_sid(sid)}/events", params={"tail": 1})
         return int(d.get("next", 0))
 
     async def stream(self, sid: str, offset: int) -> AsyncIterator[tuple[str, Any]]:
         """SSE of one session: yields ("events", {events, next}) / ("state", Session) / ("reset", {})."""
         if not self._signed:
             await self.login()
-        async with self.http.stream("GET", f"/api/sessions/{sid}/stream", params={"from": offset},
+        try:
+            async with aclosing(self._stream(sid, offset)) as it:
+                async for item in it:
+                    yield item
+        except httpx.HTTPError as e:
+            raise HarnessError(0, "unreachable", type(e).__name__) from e
+
+    async def _stream(self, sid: str, offset: int) -> AsyncIterator[tuple[str, Any]]:
+        async with self.http.stream("GET", f"/api/sessions/{check_sid(sid)}/stream", params={"from": offset},
                                     timeout=httpx.Timeout(30, read=None)) as r:
             if r.status_code == 401:
                 self._signed = False

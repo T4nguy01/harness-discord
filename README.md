@@ -29,7 +29,11 @@ Not possible from outside the server: the two-step sign-in approval (it needs th
 
 - A Harness Maxxing server (the bridge talks to its HTTP API), `uv` (shipped with Harness), root access for the service.
 - A Discord application with a bot, **Message Content Intent** on, invited with the scopes `bot` and
-  `applications.commands` (Administrator, or Manage Channels / Send Messages / Create Public Threads / Manage Threads).
+  `applications.commands`. Do **not** give Administrator. The bot needs exactly: View Channels, Manage Channels,
+  Manage Roles (only to set the private permission overwrites on the channels it creates), Send Messages, Send Messages in
+  Threads, Create Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links
+  (permissions integer `326686035024`). Without Manage Roles, create the *Harness* and *Projects* categories yourself,
+  private to you and the bot: the bridge reuses them.
 - In Harness **Settings -> Keys**: `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD`. The bridge signs in to Harness like you do,
   so keep two-step sign-in off. Neither key is ever stored in this repository or in the extension's files.
 

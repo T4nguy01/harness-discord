@@ -13,8 +13,9 @@ Settings (not secret): `<state>/extensions/discord/config.json` (`owner_id`, `gu
 
 ## Set up (the user does the Discord side)
 1. Discord developer portal: new application -> Bot -> enable "Message Content Intent" -> copy the token.
-2. Invite URL with scopes `bot applications.commands` and permission Administrator (or Manage Channels, Send
-   Messages, Create Public Threads, Manage Threads). The server should be the user's own.
+2. Invite URL with scopes `bot applications.commands` and permissions integer `326686035024` (never Administrator):
+   View Channels, Manage Channels, Manage Roles (private overwrites), Send Messages, Send Messages in Threads, Create
+   Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links. The server should be the user's own.
 3. Keys: add `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (the Harness password). Two-step sign-in must be off
    (`maxxing 2fa status`): the bridge cannot answer it.
 4. `sh <workspace>/extensions/discord/install.sh` (root): virtualenv + systemd service.

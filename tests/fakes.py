@@ -50,6 +50,7 @@ class FakeGateway:
         self.server = None
         self.port = 0
         self.sessions = 0
+        self.close_codes: list = []        # close code of each connection, as the server saw it
 
     @property
     def url(self) -> str:
@@ -127,6 +128,7 @@ class FakeGateway:
         except websockets.ConnectionClosed:
             pass
         finally:
+            self.close_codes.append(ws.close_code)
             if self.ws is ws:
                 self.ws = None
 
@@ -141,6 +143,7 @@ class FakeDiscord:
         self.threads: list[dict] = []
         self.responses: list[dict] = []        # interaction callbacks
         self.followups: list[dict] = []
+        self.originals: list[dict] = []        # edits of an interaction's own answer (deferred / placeholder)
         self.edits: list[dict] = []
         self.deleted_channels: list[str] = []
         self.renamed: list[tuple[str, str]] = []
@@ -213,6 +216,9 @@ class FakeDiscord:
         if (r := re.fullmatch(r"/interactions/([\w-]+)/([\w-]+)/callback", path)):
             self.responses.append({"id": r[1], "token": r[2], **body})
             return httpx.Response(204)
+        if (r := re.fullmatch(r"/webhooks/(\w+)/([\w-]+)/messages/@original", path)) and m == "PATCH":
+            self.originals.append({"token": r[2], **body})
+            return httpx.Response(200, json={"id": "orig"})
         if (r := re.fullmatch(r"/webhooks/(\w+)/([\w-]+)", path)):
             self.followups.append({"token": r[2], **body})
             return httpx.Response(200, json={"id": self.nid()})

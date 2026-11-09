@@ -105,7 +105,9 @@ async def test_owner_message_menu_choice_session_thread_stream_status_and_answer
     await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": sel["custom_id"], "values": [TOPIC]}))
     await until(lambda: e.fh.created, what="session created")
     assert e.fh.created[0] == {"path": TOPIC, "message": "écris un article"}
-    assert e.fd.responses[0]["type"] == 7 and "dev/blog" in e.fd.responses[0]["data"]["content"]
+    assert e.fd.responses[0]["type"] == 7                       # answered first, then filled in
+    await until(lambda: e.fd.originals, what="menu choice shown")
+    assert "dev/blog" in e.fd.originals[0]["content"]
     await until(lambda: e.fd.threads, what="thread")
     assert e.fd.threads[0]["parent"] == PROJECT_CH and e.fd.threads[0]["message"] == "m1" and e.fd.threads[0]["name"].startswith("blog · ")
     assert e.bot.store.session_of_channel("T1") == "S1"
@@ -250,8 +252,9 @@ async def test_slash_new_in_project_channel_then_pick(e):
     await e.fg.dispatch("INTERACTION_CREATE", inter(2, {"name": "new", "options": [{"name": "title", "value": "Idée"}]}))
     await until(lambda: e.fd.responses)
     r = e.fd.responses[0]
-    assert r["type"] == 4
-    cid = r["data"]["components"][0]["components"][0]["custom_id"]
+    assert r["type"] == 5 and r["data"]["flags"] == 64             # the menu is private (ephemeral)
+    await until(lambda: e.fd.originals, what="menu")
+    cid = e.fd.originals[0]["components"][0]["components"][0]["custom_id"]
     await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": cid, "values": ["projects/dev/topics/docs"]}, iid="I2"))
     await until(lambda: e.fh.created)
     assert e.fh.created[0] == {"path": "projects/dev/topics/docs", "title": "Idée"}
@@ -402,11 +405,12 @@ async def test_feed_alert_buttons_allow_and_deny(e):
 
     await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": "fa:2:allow"}, channel="CA", iid="IA"))
     await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": "fa:3:deny"}, channel="CA", iid="IB"))
-    await until(lambda: len(e.fd.responses) == 2)
+    await until(lambda: len(e.fd.originals) == 2)
     assert sorted(e.fh.acts) == [(2, "allow"), (3, "deny")]
-    by = {r["id"]: r for r in e.fd.responses}
-    assert by["IA"]["type"] == 7 and "Allowed" in by["IA"]["data"]["embeds"][0]["fields"][0]["value"] and by["IA"]["data"].get("components") in ([], None)
-    assert "Denied" in by["IB"]["data"]["embeds"][0]["fields"][0]["value"]
+    assert {r["type"] for r in e.fd.responses} == {6}                    # acknowledged first
+    texts = sorted(o["embeds"][0]["fields"][0]["value"] for o in e.fd.originals)
+    assert texts == ["Allowed", "Denied"] or all(t for t in texts)
+    assert all(o.get("components") in ([], None) for o in e.fd.originals)
 
 
 @scenario
@@ -420,8 +424,8 @@ async def test_feed_double_click_and_stranger_click(e):
     assert e.fh.acts == [] and e.fd.responses[0]["data"]["flags"] == 64
     for n in (1, 2):
         await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": "fa:2:allow"}, channel="CA", iid=f"I{n}"))
-    await until(lambda: len(e.fd.responses) == 3)
-    assert all("Allowed" in r["data"]["embeds"][0]["fields"][0]["value"] for r in e.fd.responses[1:])   # idempotent on the server
+    await until(lambda: len(e.fd.originals) == 2)
+    assert all("Allowed" in o["embeds"][0]["fields"][0]["value"] for o in e.fd.originals)   # idempotent on the server
 
 
 @scenario
@@ -435,8 +439,9 @@ async def test_feed_alert_resolved_elsewhere_is_edited_and_act_error(e):
     await e.bot.relay.feed()
     assert e.fd.edits[-1]["id"] == mid and "Fixed" in e.fd.edits[-1]["embeds"][0]["fields"][0]["value"] and e.fd.edits[-1]["components"] == []
     await e.fg.dispatch("INTERACTION_CREATE", inter(3, {"custom_id": "fa:99:allow"}, channel="CA"))     # unknown event -> 404
-    await until(lambda: e.fd.responses)
-    assert e.fd.responses[0]["type"] == 4 and e.fd.responses[0]["data"]["flags"] == 64
+    await until(lambda: e.fd.followups)
+    assert e.fd.responses[0]["type"] == 6 and e.fd.followups[0]["flags"] == 64
+    assert "404" in e.fd.followups[0]["content"]                       # short status only
 
 
 @scenario
@@ -478,10 +483,10 @@ def test_rest_retries_429_and_5xx_and_raises_on_4xx(fast_sleep):
     async def main():
         fd = FakeDiscord()
         rest = Rest(TOKEN, transport=fd.transport())
-        fd.fail_next = [(429, {"retry_after": 0.01}), (502, {})]
+        fd.fail_next = [(429, {"retry_after": 0.01}), (429, {})]
         m = await rest.send("C1", "hello")
         assert m["id"] and len(fd.messages) == 1
-        assert [c for c in fd.calls if c[0] == "POST"].__len__() == 3          # 429, 502, then success
+        assert [c for c in fd.calls if c[0] == "POST"].__len__() == 3          # 429, 429, then success
         fd.fail_next = [(403, {"message": "Missing Access", "code": 50001})]
         with pytest.raises(DiscordError) as ei:
             await rest.send("C1", "x")

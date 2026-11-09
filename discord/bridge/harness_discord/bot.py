@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import secrets
 import time
 from collections import OrderedDict
@@ -14,7 +15,7 @@ import httpx
 from . import fmt, layout
 from .relay import Relay, render
 from .discord_api import DiscordError, Gateway, Rest
-from .harness import Harness, HarnessError
+from .harness import Harness, HarnessError, check_sid
 from .store import Store
 from .texts import T
 
@@ -23,6 +24,13 @@ log = logging.getLogger("harness_discord.bot")
 VOICE_FLAG = 1 << 13          # IS_VOICE_MESSAGE
 PENDING_TTL = 600
 STATUS_EVERY = 1.5
+HERR = (HarnessError, httpx.HTTPError)
+FOLLOW_RESUME_MAX = 1800          # a follower saved longer ago than this is not resumed after a restart (seconds)
+FOLLOW_GIVE_UP = 300              # a stream failing for this long is abandoned
+FOLLOW_MAX_FAILS = 10             # ... or after this many failures in a row
+FOLLOW_SAVE_EVERY = 5.0
+MENU_MAX = 25
+EID = re.compile(r"[0-9]{1,20}")
 
 
 @dataclass
@@ -54,6 +62,9 @@ class Follower:
     active_at: float = field(default_factory=time.time)
     task: asyncio.Task | None = None
     typing: asyncio.Task | None = None
+    fails: int = 0                                     # consecutive stream failures
+    last_ok: float = field(default_factory=time.time)  # last time the stream answered
+    saved_at: float = 0.0
 
 
 class Bot:
@@ -68,6 +79,7 @@ class Bot:
         self.owner = settings["owner_id"]
         self.dm_channel = store.data.get("dm_channel", "")
         self.lay: dict = store.data.setdefault("layout", {})
+        self.locks: dict[str, asyncio.Lock] = {}                    # one per session: messages go to Harness in order
         self.sync_task: asyncio.Task | None = None
         self.relay = Relay(self)
         self.relay_task: asyncio.Task | None = None
@@ -75,6 +87,17 @@ class Bot:
     def t(self, key: str, **kw: Any) -> str:
         s = T[self.lang].get(key) or T["en"][key]
         return s.format(**kw) if kw else s
+
+    def err(self, e: Any) -> str:
+        """What the user sees of a Harness failure: a short status/code only. The detail goes to the log."""
+        log.warning("harness error: %s", e)
+        if isinstance(e, HarnessError):
+            short = f"{e.status} {e.code}" if e.status else e.code
+        elif isinstance(e, str):
+            short = e
+        else:
+            short = "unreachable"
+        return self.t("err", e=short)
 
     # --- startup -------------------------------------------------------------------------------------------
 
@@ -93,6 +116,7 @@ class Bot:
     async def on_ready(self) -> None:
         await self.rest.register_commands(self.gw.app_id, await self.commands())
         await self.sync_layout()
+        self.resume_followers()
         if not self.sync_task:
             self.sync_task = asyncio.create_task(self._sync_loop())
         if not self.relay_task:
@@ -113,7 +137,9 @@ class Bot:
             log.warning("the bot is in several servers: set guild_id in config.json")
             return
         projects = [{"name": p["name"], "emoji": p.get("emoji") or ""} for p in await self.h.tree()]
-        await layout.ensure(self.rest, self.lay, guild, self.owner, self.gw.user_id, projects, self.lang)
+        await layout.ensure(self.rest, self.lay, guild, self.owner, self.gw.user_id, projects, self.lang,
+                            state_lost=self.store.damaged)
+        self.store.damaged = False
         self.store.save()
 
     def project_of(self, channel: str) -> str:
@@ -131,6 +157,10 @@ class Bot:
             sid = self.store.session_of_channel(d.get("id", ""))
             if sid:
                 self.store.unlink(sid)                       # the session stays; it gets a new thread when used again
+            for info in self.relay.st["agents"].values():
+                if info.get("thread") and info["thread"] == str(d.get("id", "")):
+                    info["thread"] = ""                      # an agent gets a new thread with its next result
+                    self.store.save()
 
     # --- topics ---------------------------------------------------------------------------------------------
 
@@ -161,6 +191,10 @@ class Bot:
             rows.insert(0, {"type": 1, "components": [{"type": 2, "style": 1, "label": fmt.clip(self.t("cont", title=cont), 80), "custom_id": f"cont:{pid}"}]})
         return rows
 
+    def where(self, topics: list[dict], projects: bool = False) -> str:
+        n = len({x["project"] for x in topics}) if projects else len(topics)
+        return self.t("where") + (" " + self.t("menu_cut", n=MENU_MAX) if n > MENU_MAX else "")
+
     # --- incoming messages ---------------------------------------------------------------------------------
 
     async def on_message(self, m: dict) -> None:
@@ -178,8 +212,8 @@ class Bot:
             try:
                 await self.relay.run_agent(agent, (m.get("content") or "").strip())
                 await self.rest.react(ch, m["id"], "✅")
-            except HarnessError as e:
-                await self.rest.send(ch, self.t("err", e=e))
+            except HERR as e:
+                await self.rest.send(ch, self.err(e))
             return
         if in_dm:
             self.dm_channel = ch
@@ -221,10 +255,10 @@ class Bot:
         if p.in_dm and self.store.data.get("dm_current"):
             try:
                 cont = (await self.h.session(self.store.data["dm_current"]))["title"] or "…"
-            except HarnessError:
+            except HERR:
                 cont = ""
         comps = self.menu(pid, topics, projects=len(topics) > 25, cont=cont)
-        await self.rest.send(channel, self.t("where"), components=comps, reply_to=reply_to)
+        await self.rest.send(channel, self.where(topics, len(topics) > 25), components=comps, reply_to=reply_to)
 
     def purge(self) -> None:
         now = time.time()
@@ -254,40 +288,55 @@ class Bot:
 
     # --- starting and continuing sessions ----------------------------------------------------------------------
 
-    async def start(self, p: Pending, path: str) -> None:
+    async def start(self, p: Pending, path: str) -> bool:
+        """Create the session and follow it. False when it could not be started."""
         try:
             files, voice = await self.ingest(path, p.files, p.channel)
             s = await self.h.create_session(path, message=p.text, attachments=files, voice=voice, title=p.title)
-        except HarnessError as e:
-            return await self.rest.send(p.channel, self.t("err", e=e))
+        except HERR as e:
+            await self.rest.send(p.channel, self.err(e))
+            return False
         sid = s["id"]
         out = p.channel
+        ok = True
         if not p.in_dm:
             if p.thread:
                 out = p.thread
+                self.store.link(sid, out, path, parent=p.channel)
             else:
-                th = await self.rest.start_thread(p.channel, self.thread_name(path, s.get("title") or self.t("working")), p.message or None)
-                out = th["id"]
-            self.store.link(sid, out, path, parent=p.channel)
+                try:
+                    th = await self.rest.start_thread(p.channel, self.thread_name(path, s.get("title") or self.t("working")), p.message or None)
+                except DiscordError as e:                 # the session exists in Harness: answer in the channel, tell the user
+                    log.warning("thread for session %s: %s", sid, e)
+                    ok = False
+                    await self.rest.send(p.channel, self.t("start_failed"))
+                else:
+                    out = th["id"]
+                    self.store.link(sid, out, path, parent=p.channel)
         else:
             self.store.set_dm(sid, p.channel)
         if p.text or files or voice:
             await self.follow(sid, out, 0, 1)
-        else:
+        elif ok:
             await self.rest.send(out, self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")))
+        return ok
 
     @staticmethod
     def thread_name(path: str, title: str) -> str:
         return f"{path.split('/topics/', 1)[-1]} · {title}"[:100]
 
     async def forward(self, sid: str, m: dict, channel: str) -> None:
+        async with self.locks.setdefault(sid, asyncio.Lock()):       # two quick messages keep their order
+            await self._forward(sid, m, channel)
+
+    async def _forward(self, sid: str, m: dict, channel: str) -> None:
         try:
             s = await self.h.session(sid)
-        except HarnessError as e:
-            if e.status == 404:
+        except HERR as e:
+            if isinstance(e, HarnessError) and e.status == 404:
                 self.store.unlink(sid)
                 return await self.rest.send(channel, self.t("gone"))
-            return await self.rest.send(channel, self.t("err", e=e))
+            return await self.rest.send(channel, self.err(e))
         if s.get("archived"):
             return await self.rest.send(channel, self.t("archived_s"))
         try:
@@ -300,8 +349,8 @@ class Bot:
             if not text and not files and not voice:
                 return
             await self.h.send(sid, text or ("(voice)" if voice else "(file)"), attachments=files, voice=voice)
-        except HarnessError as e:
-            return await self.rest.send(channel, self.t("err", e=e))
+        except HERR as e:
+            return await self.rest.send(channel, self.err(e))
         await self.follow(sid, channel, offset, 1)
 
     # --- following a session ----------------------------------------------------------------------------------
@@ -311,16 +360,62 @@ class Bot:
         if f:
             f.expect += expect
             f.active_at = time.time()
+            self.persist(f, force=True)
             return
         f = Follower(sid=sid, channel=channel, offset=offset, expect=expect, started=time.time())
         self.followers[sid] = f
+        self.persist(f, force=True)
         f.typing = asyncio.create_task(self._typing(f))
         f.task = asyncio.create_task(self._run(f))
+
+    def persist(self, f: Follower | None, force: bool = False, sid: str = "") -> None:
+        """Remember the running followers so that a restart picks them up again (None = forget `sid`)."""
+        saved = self.store.data.setdefault("followers", {})
+        if f is None:
+            if saved.pop(sid, None) is not None:
+                self.store.save()
+            return
+        now = time.time()
+        if not force and now - f.saved_at < FOLLOW_SAVE_EVERY:
+            return
+        f.saved_at = now
+        saved[f.sid] = {"channel": f.channel, "offset": f.offset, "expect": f.expect, "at": now}
+        self.store.save()
+
+    def resume_followers(self) -> None:
+        saved = self.store.data.get("followers") or {}
+        for sid, v in list(saved.items()):
+            try:
+                if time.time() - float(v["at"]) > FOLLOW_RESUME_MAX or sid in self.followers:
+                    saved.pop(sid, None)
+                    continue
+                check_sid(sid)
+                f = Follower(sid=sid, channel=str(v["channel"]), offset=int(v["offset"]), expect=max(1, int(v["expect"])), started=time.time())
+            except (KeyError, TypeError, ValueError, HarnessError):
+                saved.pop(sid, None)
+                continue
+            self.followers[sid] = f
+            f.typing = asyncio.create_task(self._typing(f))
+            f.task = asyncio.create_task(self._run(f))
+            log.info("following session %s again after a restart", sid)
+        self.store.save()
 
     async def _typing(self, f: Follower) -> None:
         while True:
             await self.rest.typing(f.channel)
             await asyncio.sleep(8)
+
+    def _failed(self, f: Follower, e: Exception) -> bool:
+        """A stream failure. True when the follower must give up."""
+        f.fails += 1
+        if isinstance(e, HarnessError) and e.status in (403, 404):
+            log.warning("stream %s: %s - session gone, not following it", f.sid, e)
+            return True
+        if f.fails >= FOLLOW_MAX_FAILS or time.time() - f.last_ok > FOLLOW_GIVE_UP:
+            log.warning("stream %s: %s - giving up after %d failures", f.sid, e, f.fails)
+            return True
+        log.warning("stream %s: %s", f.sid, e)
+        return False
 
     async def _run(self, f: Follower) -> None:
         try:
@@ -331,13 +426,17 @@ class Bot:
                         try:
                             kind, data = await asyncio.wait_for(it.__anext__(), 20)
                         except asyncio.TimeoutError:
+                            f.last_ok = time.time()          # connected, just quiet
                             if f.state == "idle" and time.time() - f.active_at > 45:
                                 f.expect = 0              # nothing more is coming for the messages we counted
                             continue
                         except StopAsyncIteration:
                             await asyncio.sleep(1)           # the stream closed: do not spin while reconnecting
+                            if time.time() - f.last_ok > FOLLOW_GIVE_UP:
+                                f.expect = 0
                             break
-                        f.active_at = time.time()
+                        f.active_at = f.last_ok = time.time()
+                        f.fails = 0
                         if kind == "state":
                             f.state = data.get("state", "")
                         elif kind == "reset":
@@ -346,10 +445,13 @@ class Bot:
                         elif kind == "events":
                             f.offset = data.get("next", f.offset)
                             for ev in data.get("events", []):
-                                await self.on_event(f, ev)
+                                await self._event(f, ev)
+                            self.persist(f)
                     await it.aclose()
-                except (HarnessError, httpx.HTTPError) as e:
-                    log.warning("stream %s: %s", f.sid, e)
+                except HERR as e:
+                    if self._failed(f, e):
+                        f.expect = 0
+                        break
                     await asyncio.sleep(3)
         except asyncio.CancelledError:
             raise
@@ -359,7 +461,22 @@ class Bot:
             if f.typing:
                 f.typing.cancel()
             self.followers.pop(f.sid, None)
-            self.follow_end[f.sid] = time.time()
+            self.persist(None, sid=f.sid)
+            now = time.time()
+            self.follow_end[f.sid] = now
+            for k in [k for k, t in self.follow_end.items() if now - t > 3600]:     # the bell only looks at recent ends
+                del self.follow_end[k]
+
+    async def _event(self, f: Follower, ev: dict) -> None:
+        """One event of the session; whatever goes wrong with it, the next ones are still handled."""
+        try:
+            await self.on_event(f, ev)
+        except asyncio.CancelledError:
+            raise
+        except (DiscordError, httpx.HTTPError, HarnessError) as e:
+            log.warning("event %s of session %s: %s", ev.get("type"), f.sid, e)
+        except Exception:  # noqa: BLE001
+            log.exception("event %s of session %s", ev.get("type"), f.sid)
 
     async def on_event(self, f: Follower, ev: dict) -> None:
         typ = ev.get("type")
@@ -396,10 +513,19 @@ class Bot:
             pass
 
     async def finish(self, f: Follower, ev: dict) -> None:
-        secs = ev.get("duration_ms", 0) / 1000
+        try:
+            await self._finish(f, ev)
+        finally:                                               # even if Discord failed, this turn is over
+            f.cur, f.steps = [], 0
+            f.expect = max(0, f.expect - 1)
+        await self.retitle(f)
+
+    async def _finish(self, f: Follower, ev: dict) -> None:
+        secs = (ev.get("duration_ms") or 0) / 1000
         ok = ev.get("ok", True)
         if f.status_id:
-            summary = f"{'✅' if ok else '⚠'} {self.t('done') if ok else self.t('failed')} · {self.t('steps', n=f.steps)} · {secs:.0f}s · {ev.get('cost_usd', 0):.2f} $"
+            cost = ev.get("cost_usd") or 0
+            summary = f"{'✅' if ok else '⚠'} {self.t('done') if ok else self.t('failed')} · {self.t('steps', n=f.steps)} · {secs:.0f}s · {cost:.2f} $"
             try:
                 await self.rest.edit(f.channel, f.status_id, summary)
             except DiscordError:
@@ -408,13 +534,9 @@ class Bot:
         text = "\n\n".join(x for x in f.cur if x.strip()) or f.last_text
         if not ok and not text:
             text = "⚠ " + self.t("failed")
-        sent = None
         for part in fmt.chunk(text):
             sent = await self.rest.send(f.channel, part)
             self.remember(sent["id"], f.sid)
-        f.cur, f.steps = [], 0
-        f.expect = max(0, f.expect - 1)
-        await self.retitle(f)
 
     def remember(self, mid: str, sid: str) -> None:
         self.msg_session[mid] = sid
@@ -427,7 +549,7 @@ class Bot:
             return
         try:
             s = await self.h.session(f.sid)
-        except HarnessError:
+        except HERR:
             return
         if s.get("title"):
             try:
@@ -451,6 +573,7 @@ class Bot:
     async def on_component(self, i: dict) -> None:
         kind, _, pid = i["data"]["custom_id"].partition(":")
         p = self.pending.get(pid)
+        app = self.gw.app_id
         if kind in ("pick", "cont") and not p:
             return await self.rest.respond(i, 7, self.t("expired"), components=[])
         if kind == "cont":
@@ -459,31 +582,40 @@ class Bot:
             await self.rest.respond(i, 7, "↩", components=[])
             return await self.forward_pending(sid, p)
         if kind == "pick":
-            v = i["data"]["values"][0]
-            if v.startswith("p:"):
-                proj = v[2:]
-                topics = [x for x in await self.topics() if x["project"] == proj]
-                return await self.rest.respond(i, 7, self.t("where"), components=self.menu(pid, topics))
-            if v not in {x["path"] for x in await self.topics()}:         # only a topic that really exists
-                return await self.rest.respond(i, 7, self.t("expired"), components=[])
-            self.pending.pop(pid, None)
-            label = v.split("projects/", 1)[-1].replace("/topics/", "/")
-            await self.rest.respond(i, 7, f"✅ {label}", components=[])
+            await self.rest.respond(i, 7, "⏳", components=[])            # answer first: listing topics may take a moment
+            try:
+                v = i["data"]["values"][0]
+                topics = await self.topics()
+                if v.startswith("p:"):
+                    only = [x for x in topics if x["project"] == v[2:]]
+                    return await self.rest.edit_original(i, app, self.where(only), components=self.menu(pid, only))
+                if v not in {x["path"] for x in topics}:                  # only a topic that really exists
+                    return await self.rest.edit_original(i, app, self.t("expired"), components=[])
+                self.pending.pop(pid, None)
+                label = v.split("projects/", 1)[-1].replace("/topics/", "/")
+                await self.rest.edit_original(i, app, f"✅ {label}", components=[])
+            except HERR as e:
+                return await self.rest.edit_original(i, app, self.err(e), components=[])
             return await self.start(p, v)
         if kind == "fa":                                       # a feed alert button: Allow / Deny / Seen...
             parts = i["data"]["custom_id"].split(":", 2)
-            if len(parts) != 3 or not parts[1].isdigit():
+            if len(parts) != 3 or not EID.fullmatch(parts[1]):
                 return await self.rest.respond(i, 4, self.t("expired"), ephemeral=True)
             _, eid, action = parts
+            await self.rest.respond(i, 6)                           # acknowledge now, the click may take a while
             try:
                 e = await self.relay.act(int(eid), action)
-            except HarnessError as err:
-                return await self.rest.respond(i, 4, self.t("err", e=err), ephemeral=True)
+            except HERR as err:
+                return await self.rest.followup(i, app, self.err(err), ephemeral=True)
             embed, comps = render(e, self.web_url)
-            return await self.rest.respond(i, 7, "", components=comps, embeds=[embed])
+            return await self.rest.edit_original(i, app, "", components=comps, embeds=[embed])
         if kind == "sess":                                     # a session chosen in /sessions
+            sid = i["data"]["values"][0]
             await self.rest.respond(i, 7, self.t("sessions_pick"), components=[])
-            return await self.open_session(i["data"]["values"][0], i["channel_id"], not i.get("guild_id"))
+            if not isinstance(sid, str) or not re.fullmatch(r"[\w-]{1,64}", sid, re.ASCII):
+                return await self.rest.followup(i, app, self.t("expired"), ephemeral=True)
+            say = lambda s: self.rest.followup(i, app, s, ephemeral=True)    # noqa: E731
+            return await self.open_session(sid, i["channel_id"], not i.get("guild_id"), say)
 
     async def forward_pending(self, sid: str, p: Pending) -> None:
         fake = {"id": p.message, "content": p.text, "attachments": p.files}
@@ -498,8 +630,10 @@ class Bot:
         ch, in_dm = i["channel_id"], not i.get("guild_id")
         if name == "help":
             return await self.rest.respond(i, 4, self.t("help"), ephemeral=True)
+        if name in ("new", "sessions") and not self.allowed_here(ch, in_dm):
+            return await self.rest.respond(i, 4, self.t("refused_here"), ephemeral=True)
         if name == "new":
-            return await self.cmd_new(i, ch, in_dm, opts.get("title", ""))
+            return await self.cmd_new(i, ch, in_dm, str(opts.get("title") or "")[:100])
         await self.rest.respond(i, 5, ephemeral=True)               # deferred: Harness may take a moment
         reply = lambda s: self.rest.followup(i, self.gw.app_id, s, ephemeral=True)    # noqa: E731
         try:
@@ -535,50 +669,71 @@ class Bot:
                 return await reply(self.t("status", title=s.get("title") or "…", path=s["path"].split("projects/", 1)[-1].replace("/topics/", "/"),
                                           state=s["state"], queue=s.get("queue", 0), model=s.get("real_model") or s.get("model") or self.t("default"),
                                           cost=s.get("cost_usd", 0), turns=s.get("turns", 0), url=f"{self.web_url}/sessions/{sid}"))
-        except HarnessError as e:
-            await reply(self.t("err", e=e))
+        except HERR as e:
+            await reply(self.err(e))
+        except DiscordError as e:
+            log.warning("command %s: %s", name, e)
+
+    def allowed_here(self, ch: str, in_dm: bool) -> bool:
+        """/new and /sessions list private session titles: only in a DM, a project channel or a session thread."""
+        if in_dm or self.project_of(ch) or self.store.session_of_channel(ch):
+            return True
+        return str(ch) in {v for v in self.lay.values() if isinstance(v, str)}
 
     async def cmd_new(self, i: dict, ch: str, in_dm: bool, title: str) -> None:
         sid = self.store.session_of_channel(ch)
         pid = secrets.token_hex(4)
         self.purge()
+        app = self.gw.app_id
         if sid:                                                # inside a session's thread: same topic, new session
             link = self.store.data["threads"][sid]
             path = link["path"]
             await self.rest.respond(i, 5, ephemeral=True)
             p = Pending(text="", files=[], channel=link.get("parent") or ch, message="", in_dm=False, title=title)
-            await self.start(p, path)
-            return await self.rest.followup(i, self.gw.app_id, self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")), ephemeral=True)
+            ok = await self.start(p, path)
+            msg = self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")) if ok else self.t("start_failed")
+            return await self.rest.followup(i, app, msg, ephemeral=True)
         project = self.project_of(ch)
         if not in_dm and not project:
             return await self.rest.respond(i, 4, self.t("no_session"), ephemeral=True)
+        await self.rest.respond(i, 5, ephemeral=True)             # the menu is private to the owner
+        try:
+            topics = [x for x in await self.topics() if not project or x["project"] == project]
+        except HERR as e:
+            return await self.rest.edit_original(i, app, self.err(e))
         self.pending[pid] = Pending(text="", files=[], channel=ch, message="", in_dm=in_dm, title=title, project=project)
-        topics = [x for x in await self.topics() if not project or x["project"] == project]
-        await self.rest.respond(i, 4, self.t("where"), components=self.menu(pid, topics, projects=len(topics) > 25))
+        await self.rest.edit_original(i, app, self.where(topics, len(topics) > MENU_MAX),
+                                      components=self.menu(pid, topics, projects=len(topics) > MENU_MAX))
 
     async def cmd_sessions(self, i: dict, reply) -> None:
-        items = [s for s in await self.h.sessions() if not s.get("archived") and not s.get("cron")][:25]
+        every = [s for s in await self.h.sessions() if not s.get("archived") and not s.get("cron")]
+        items = every[:MENU_MAX]
         if not items:
             return await reply(self.t("sessions_none"))
         opts = [{"label": fmt.clip(s.get("title") or "…", 100), "value": s["id"],
                  "description": fmt.clip(s["path"].split("projects/", 1)[-1].replace("/topics/", "/"), 100)} for s in items]
         comps = [{"type": 1, "components": [{"type": 3, "custom_id": "sess:x", "placeholder": self.t("sessions_ph"), "options": opts}]}]
-        await self.rest.send(i["channel_id"], self.t("sessions_pick"), components=comps)
-        await reply("↓")
+        note = " " + self.t("menu_cut", n=MENU_MAX) if len(every) > MENU_MAX else ""
+        await self.rest.edit_original(i, self.gw.app_id, self.t("sessions_pick") + note, components=comps)     # ephemeral, like the deferral
 
-    async def open_session(self, sid: str, channel: str, in_dm: bool) -> None:
+    async def open_session(self, sid: str, channel: str, in_dm: bool, say=None) -> None:
+        say = say or (lambda s: self.rest.send(channel, s))
         try:
             s = await self.h.session(sid)
-        except HarnessError as e:
-            return await self.rest.send(channel, self.t("err", e=e))
+        except HERR as e:
+            return await say(self.err(e))
         if in_dm:
             self.store.set_dm(sid, channel)
-            return await self.rest.send(channel, self.t("opened", title=s.get("title") or "…", where=self.t("hint_dm")))
+            return await say(self.t("opened", title=s.get("title") or "…", where=self.t("hint_dm")))
         th = self.store.channel_of(sid)
         if not th:
             parent = self.lay.get("projects", {}).get(s["path"].split("/")[1] if s["path"].startswith("projects/") else "")
             if not parent:
-                return await self.rest.send(channel, self.t("err", e="no channel for this project"))
-            th = (await self.rest.start_thread(parent, self.thread_name(s["path"], s.get("title") or "…")))["id"]
+                return await say(self.err("no channel for this project"))
+            try:
+                th = (await self.rest.start_thread(parent, self.thread_name(s["path"], s.get("title") or "…")))["id"]
+            except DiscordError as e:
+                log.warning("thread for session %s: %s", sid, e)
+                return await say(self.t("start_failed"))
             self.store.link(sid, th, s["path"], parent=parent)
-        await self.rest.send(channel, self.t("opened", title=s.get("title") or "…", where=f"<#{th}>"))
+        await say(self.t("opened", title=s.get("title") or "…", where=f"<#{th}>"))

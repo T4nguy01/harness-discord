@@ -40,6 +40,9 @@ class FakeRest:
     async def respond(self, i, kind, content=None, components=None, ephemeral=False, embeds=None):
         self.responses.append((kind, content, components, embeds))
 
+    async def edit_original(self, i, app, content=None, components=None, embeds=None):
+        self.responses.append(("orig", content, components, embeds))
+
     async def followup(self, i, app, content, ephemeral=False):
         self.responses.append(("follow", content, None))
 

@@ -74,6 +74,7 @@ def test_button_press_calls_the_act_endpoint(tmp_path):
         bot.h = Feed([])
         await bot.on_interaction({"type": 3, "id": "i", "token": "t", "channel_id": "A", "user": {"id": "42"},
                                   "data": {"custom_id": "fa:9:allow"}})
-        kind, content, comps, embeds = rest.responses[0]
-        assert kind == 7 and "Allowed" in embeds[0]["fields"][0]["value"] and comps == []
+        assert rest.responses[0][0] == 6
+        kind, content, comps, embeds = rest.responses[1]
+        assert kind == "orig" and "Allowed" in embeds[0]["fields"][0]["value"] and comps == []
     run(go())
