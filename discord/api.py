@@ -73,18 +73,21 @@ def _status(ctx):
         "bot_id": str(st.get("bot_id", "")),
         "invite": _invite(st.get("bot_id")),
         "permissions": PERMISSIONS,
-        "audit": _audit(d),
+        "audit": _audit(d, 25),
         "error": str(st.get("error", ""))[:300],
         "keys": {"token": bool(ctx["secret"]("DISCORD_BOT_TOKEN")), "password": bool(ctx["secret"]("HARNESS_PASSWORD"))},
         "config": {
             "owner_id": str(cfg.get("owner_id", "")),
             "guild_id": str(cfg.get("guild_id", "")),
             "reply_mode": cfg.get("reply_mode", "live"),
+            "workspace_dir": str(cfg.get("workspace_dir", "")),
             **{k: cfg.get(k, True) for k in FLAGS},
         },
         "layout": {"guild": lay.get("guild", ""), "projects": sorted(lay.get("projects", {})),
                    "system": [k for k in ("alerts", "notifications", "crons", "agents") if lay.get(k)],
-                   "dashboard": bool(state.get("dashboard"))},
+                   "dashboard": bool(state.get("dashboard")),
+                   "links": {**{k: lay[k] for k in ("alerts", "notifications", "crons", "agents") if lay.get(k)},
+                             **{"p:" + n: c for n, c in sorted(lay.get("projects", {}).items())}}},
         "threads": len(state.get("threads", {})),
     }
 
@@ -110,6 +113,11 @@ def handle(ctx, method, path, query, body):
             if body["reply_mode"] not in MODES:
                 return 400, {"error": "bad_mode", "message": "reply_mode: live or final."}
             cfg["reply_mode"] = body["reply_mode"]
+        if "workspace_dir" in body:
+            v = str(body["workspace_dir"]).strip()
+            if v and (not v.startswith("/") or ".." in v.split("/") or not Path(v).is_dir()):
+                return 400, {"error": "bad_workspace", "message": "workspace_dir: an existing absolute folder, or empty for the default."}
+            cfg["workspace_dir"] = v
         for k in FLAGS:
             if k in body:
                 if not isinstance(body[k], bool):

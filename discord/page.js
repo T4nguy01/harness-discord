@@ -2,6 +2,11 @@
 // never innerHTML (the elements are built with h()).
 const TXT = {
   en: {
+    tabOverview: "Overview", tabSettings: "Settings", tabServer: "Server", tabActivity: "Activity",
+    allOn: "All on", allOff: "All off", reset: "Defaults", resetAsk: "Reset every option to its default (all on)? Nothing is saved until you press Save.",
+    filesT: "Files from Discord", wsL: "Workspace folder", wsH: "Root for /harness files (only files below it can be sent). Empty = default (/root/maxxing).", wsBad: "An existing absolute folder, or empty.",
+    quickT: "Quick actions", okShort: "Everything is in place", details: "Details", refresh: "Refresh", openCh: "Open in Discord", nOf: "enabled",
+    checkAll: "Setup checklist",
     title: "Discord", sub: "Talk to your Harness sessions from your Discord server.",
     connected: "Connected", offline: "Not connected", stopped: "Service stopped", starting: "Starting…",
     beat: "last signal", version: "Version", bot: "Bot", server: "Server", threads: "Session threads", running: "Turns running", projects: "Project channels",
@@ -41,6 +46,11 @@ const TXT = {
             "Run install.sh from the Harness Discord repository (as root), then press Resync channels."],
   },
   fr: {
+    tabOverview: "Aperçu", tabSettings: "Réglages", tabServer: "Serveur", tabActivity: "Activité",
+    allOn: "Tout activer", allOff: "Tout couper", reset: "Défauts", resetAsk: "Remettre toutes les options par défaut (tout activé) ? Rien n'est enregistré avant d'appuyer sur Enregistrer.",
+    filesT: "Fichiers depuis Discord", wsL: "Dossier de travail", wsH: "Racine de /harness files (seuls les fichiers en dessous peuvent être envoyés). Vide = défaut (/root/maxxing).", wsBad: "Un dossier absolu existant, ou vide.",
+    quickT: "Actions rapides", okShort: "Tout est en place", details: "Détails", refresh: "Actualiser", openCh: "Ouvrir dans Discord", nOf: "activés",
+    checkAll: "Liste de contrôle",
     title: "Discord", sub: "Parle à tes sessions Harness depuis ton serveur Discord.",
     connected: "Connecté", offline: "Non connecté", stopped: "Service arrêté", starting: "Démarrage…",
     beat: "dernier signal", version: "Version", bot: "Bot", server: "Serveur", threads: "Fils de sessions", running: "Tours en cours", projects: "Salons de projets",
@@ -88,6 +98,17 @@ const GROUPS = [
 ];
 const FLAGS = GROUPS.flatMap((g) => g[1]);
 const ID_RE = /^\d{15,25}$/;
+
+const CSS = `.hd-sw{position:relative;flex:none;width:38px;height:22px;margin-top:2px}
+.hd-sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:1}
+.hd-sw i{position:absolute;inset:0;border-radius:11px;background:rgba(128,128,128,.4);transition:background .15s}
+.hd-sw i::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
+.hd-sw input:checked+i{background:#5865f2}.hd-sw input:checked+i::after{transform:translateX(16px)}
+.hd-sw input:focus-visible+i{outline:2px solid #5865f2;outline-offset:2px}
+.hd-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border,rgba(128,128,128,.25));overflow-x:auto}
+.hd-tab{background:none;border:0;border-bottom:2px solid transparent;padding:8px 14px;cursor:pointer;color:inherit;opacity:.65;font:inherit;white-space:nowrap}
+.hd-tab[aria-selected=true]{opacity:1;border-bottom-color:#5865f2;font-weight:600}
+.hd-chip{text-decoration:none}`;
 
 function h(tag, props, ...kids) {
   const e = document.createElement(tag);
@@ -137,47 +158,83 @@ export function mount(el, ctx) {
   inputs.reply_mode = modeSel;
 
   const toggle = (name, [title, desc]) => {
-    const cb = h("input", { type: "checkbox", class: "ui-check", name, style: "flex:none;margin-top:3px" });
-    cb.addEventListener("change", refreshDirty);
+    const cb = h("input", { type: "checkbox", name, role: "switch" });
+    cb.addEventListener("change", () => { refreshDirty(); countGroups(); });
     toggles[name] = cb;
-    return h("label", { class: "ui-row", style: "flex-wrap:nowrap;align-items:flex-start;gap:10px;cursor:pointer" }, cb,
+    return h("label", { class: "ui-row", style: "flex-wrap:nowrap;align-items:flex-start;gap:12px;cursor:pointer" }, h("span", { class: "hd-sw" }, cb, h("i")),
       h("span", {}, h("b", { text: title }), h("br"), h("span", { class: "ui-small ui-muted", text: desc })));
   };
 
   const guide = h("details", {}, h("summary", { class: "ui-small", style: "cursor:pointer", text: L.guideT }),
     h("ol", { class: "ui-steps", style: "margin-top:8px" }, ...L.steps.map((s) => h("li", { text: s }))));
 
-  el.replaceChildren(h("div", { class: "ui-page", style: "max-width:820px;display:flex;flex-direction:column;gap:14px" },
+  const wsInp = h("input", { class: "ui-input", name: "workspace_dir", autocomplete: "off", spellcheck: "false", placeholder: "/root/maxxing" });
+  const wsBad = h("span", { class: "ui-small", style: "color:var(--danger,#d33);display:none", text: L.wsBad });
+  wsInp.addEventListener("input", () => { const v = wsInp.value.trim(); wsBad.style.display = v && (!v.startsWith("/") || v.split("/").includes("..")) ? "" : "none"; refreshDirty(); });
+  inputs.workspace_dir = wsInp;
+  const groupCount = {};
+  const groupCard = ([t, names, keys]) => {
+    const cnt = h("span", { class: "ui-small ui-muted" });
+    groupCount[t] = [names, cnt];
+    const setAll = (v) => { for (const n of names) toggles[n].checked = v; refreshDirty(); countGroups(); };
+    return h("div", { class: "ui-card" }, h("div", { style: "padding:14px 16px" },
+      h("div", { class: "ui-row", style: "justify-content:space-between;align-items:center;gap:8px;margin:0 0 10px;flex-wrap:wrap" },
+        h("h2", { class: "ui-h3", style: "margin:0", text: L[t] }),
+        h("span", { class: "ui-row", style: "gap:8px;align-items:center" }, cnt,
+          names.length > 1 ? h("button", { class: "ui-btn ui-sm ui-ghost", text: L.allOn, onclick: () => setAll(true) }) : null,
+          names.length > 1 ? h("button", { class: "ui-btn ui-sm ui-ghost", text: L.allOff, onclick: () => setAll(false) }) : null)),
+      h("div", { class: "ui-stack", style: "gap:14px" }, ...names.map((n, i) => toggle(n, L[keys[i]])))));
+  };
+  function countGroups() { for (const [names, cnt] of Object.values(groupCount)) cnt.textContent = `${names.filter((n) => toggles[n].checked).length}/${names.length} ${L.nOf}`; }
+
+  const panes = {
+    overview: h("div", { class: "ui-stack", style: "gap:14px" },
+      card(null, h("div", { class: "ui-row", style: "gap:10px;flex-wrap:nowrap;align-items:center" }, dot, h("div", {}, stateT, h("br"), stateS)), h("div", { style: "height:12px" }), tiles),
+      card(null, checkT, checkBar, checkList, guide),
+      card(L.actionsT, h("div", { class: "ui-row", style: "gap:8px;flex-wrap:wrap" },
+        h("button", { class: "ui-btn ui-secondary", text: L.sync, onclick: () => act("sync") }),
+        h("button", { class: "ui-btn ui-secondary", text: L.test, onclick: () => act("test") }),
+        h("button", { class: "ui-btn ui-outline", text: L.restart, onclick: () => { if (confirm(L.restart + " ?")) act("restart"); } })))),
+    settings: h("div", { class: "ui-stack", style: "gap:14px" },
+      card(L.accessT, h("div", { class: "ui-stack", style: "gap:14px" }, idField("owner_id", L.ownerL, L.ownerH), idField("guild_id", L.guildL, L.guildH))),
+      card(L.repliesT, h("div", { class: "ui-field" }, h("label", { class: "ui-label", text: L.modeL }), modeSel)),
+      ...GROUPS.map(groupCard),
+      card(L.filesT, h("div", { class: "ui-field" }, h("label", { class: "ui-label", text: L.wsL }), wsInp, wsBad, h("span", { class: "ui-small ui-muted", text: L.wsH })))),
+    server: h("div", { class: "ui-stack", style: "gap:14px" }, card(L.layoutT, layoutBox), card(L.inviteT, inviteBox)),
+    activity: h("div", { class: "ui-stack", style: "gap:14px" }, card(L.auditT, auditBox)),
+  };
+  const saveBar = h("div", { class: "ui-card", style: "position:sticky;bottom:8px;z-index:5;display:none" },
+    h("div", { class: "ui-row", style: "padding:10px 16px;gap:10px;flex-wrap:wrap;align-items:center" }, saveBtn, revertBtn,
+      h("button", { class: "ui-btn ui-ghost", text: L.reset, onclick: () => { if (confirm(L.resetAsk)) { for (const k of FLAGS) toggles[k].checked = true; modeSel.value = "live"; refreshDirty(); countGroups(); } } }),
+      dirtyT, msg, h("span", { class: "ui-small ui-muted", style: "margin-left:auto", text: L.applies })));
+  const tabBtns = {};
+  const tabsBar = h("div", { class: "hd-tabs", role: "tablist" }, ...["overview", "settings", "server", "activity"].map((k) =>
+    (tabBtns[k] = h("button", { class: "hd-tab", role: "tab", text: L["tab" + k[0].toUpperCase() + k.slice(1)], onclick: () => showTab(k) }))));
+  function showTab(k) {
+    for (const [n, p] of Object.entries(panes)) { p.style.display = n === k ? "" : "none"; tabBtns[n].setAttribute("aria-selected", String(n === k)); }
+    saveBar.style.display = k === "settings" ? "" : "none";
+    try { sessionStorage.setItem("hd-tab", k); } catch { /* storage blocked */ }
+  }
+  el.replaceChildren(h("style", { text: CSS }), h("div", { class: "ui-page", style: "max-width:820px;display:flex;flex-direction:column;gap:14px" },
     h("div", {}, h("h1", { class: "ui-h1", style: "margin:0", text: L.title }), h("p", { class: "ui-muted", style: "margin:4px 0 0", text: L.sub })),
-    errBox,
-    card(null, h("div", { class: "ui-row", style: "gap:10px;flex-wrap:nowrap;align-items:center" }, dot, h("div", {}, stateT, h("br"), stateS)), h("div", { style: "height:12px" }), tiles),
-    card(null, checkT, checkBar, checkList, guide),
-    card(L.accessT, h("div", { class: "ui-stack", style: "gap:14px" }, idField("owner_id", L.ownerL, L.ownerH), idField("guild_id", L.guildL, L.guildH))),
-    card(L.repliesT, h("div", { class: "ui-field" }, h("label", { class: "ui-label", text: L.modeL }), modeSel)),
-    ...GROUPS.map(([t, names, keys]) => card(L[t], h("div", { class: "ui-stack", style: "gap:12px" }, ...names.map((n, i) => toggle(n, L[keys[i]]))))),
-    h("div", { class: "ui-card", style: "position:sticky;bottom:8px;z-index:5" },
-      h("div", { class: "ui-row", style: "padding:10px 16px;gap:10px;flex-wrap:wrap;align-items:center" }, saveBtn, revertBtn, dirtyT, msg, h("span", { class: "ui-small ui-muted", style: "margin-left:auto", text: L.applies }))),
-    card(L.actionsT, h("div", { class: "ui-row", style: "gap:8px;flex-wrap:wrap" },
-      h("button", { class: "ui-btn ui-secondary", text: L.sync, onclick: () => act("sync") }),
-      h("button", { class: "ui-btn ui-secondary", text: L.test, onclick: () => act("test") }),
-      h("button", { class: "ui-btn ui-outline", text: L.restart, onclick: () => { if (confirm(L.restart + " ?")) act("restart"); } }))),
-    card(L.layoutT, layoutBox),
-    card(L.inviteT, inviteBox),
-    card(L.auditT, auditBox)));
+    errBox, tabsBar, ...Object.values(panes), saveBar));
+  let startTab = "overview"; try { startTab = sessionStorage.getItem("hd-tab") || startTab; } catch { /* */ }
+  showTab(panes[startTab] ? startTab : "overview");
   dot.parentElement.prepend(ctx.icon ? ctx.icon("message-square") : "");
 
   // --- helpers -------------------------------------------------------------------------------------------------------
   const say = (t, bad) => { msg.textContent = t; msg.style.color = bad ? "var(--danger,#d33)" : ""; clearTimeout(msgTimer); msgTimer = setTimeout(() => (msg.textContent = ""), 5000); };
-  const current = () => ({ owner_id: inputs.owner_id.value.trim(), guild_id: inputs.guild_id.value.trim(), reply_mode: modeSel.value, ...Object.fromEntries(FLAGS.map((k) => [k, toggles[k].checked])) });
-  const valid = (c) => (!c.owner_id || ID_RE.test(c.owner_id)) && (!c.guild_id || ID_RE.test(c.guild_id));
+  const current = () => ({ owner_id: inputs.owner_id.value.trim(), guild_id: inputs.guild_id.value.trim(), reply_mode: modeSel.value, workspace_dir: wsInp.value.trim(), ...Object.fromEntries(FLAGS.map((k) => [k, toggles[k].checked])) });
+  const valid = (c) => (!c.owner_id || ID_RE.test(c.owner_id)) && (!c.guild_id || ID_RE.test(c.guild_id)) && (!c.workspace_dir || (c.workspace_dir.startsWith("/") && !c.workspace_dir.split("/").includes("..")));
   function refreshDirty() {
     const c = current(), d = baseline && JSON.stringify(c) !== JSON.stringify(baseline);
     saveBtn.disabled = !d || !valid(c); revertBtn.style.display = d ? "" : "none";
     dirtyT.textContent = d ? L.dirty : L.clean;
   }
   function fill(c) {
-    inputs.owner_id.value = c.owner_id; inputs.guild_id.value = c.guild_id; modeSel.value = c.reply_mode;
+    inputs.owner_id.value = c.owner_id; inputs.guild_id.value = c.guild_id; modeSel.value = c.reply_mode; wsInp.value = c.workspace_dir || "";
     for (const k of FLAGS) toggles[k].checked = !!c[k];
+    countGroups();
     for (const n of ["owner_id", "guild_id"]) inputs[n].dispatchEvent(new Event("input"));
   }
   const copyBtn = (text) => h("button", { class: "ui-btn ui-sm ui-ghost", text: L.copy, onclick: async (e) => {
@@ -185,7 +242,10 @@ export function mount(el, ctx) {
   } });
   const kv = (k, v) => h("div", { class: "ui-row", style: "justify-content:space-between;gap:10px;flex-wrap:wrap" }, h("span", { class: "ui-muted", text: k }), h("span", { style: "text-align:right;word-break:break-word", text: v }));
   const tile = (label, value) => h("div", { class: "ui-tile ui-stat", style: "padding:8px 10px;border:1px solid var(--border,rgba(128,128,128,.25));border-radius:8px" }, h("div", { class: "ui-stat-label ui-small ui-muted", text: label }), h("div", { class: "ui-stat-value", style: "font-weight:600;font-size:1.15rem;word-break:break-all", text: String(value) }));
-  const chip = (t) => h("span", { class: "ui-badge ui-neutral", text: t });
+  const chip = (t, id) => {
+    const g = status && status.layout.guild;
+    return id && g ? h("a", { class: "ui-badge ui-neutral hd-chip", href: `https://discord.com/channels/${g}/${id}`, target: "_blank", rel: "noopener noreferrer", title: L.openCh, text: t }) : h("span", { class: "ui-badge ui-neutral", text: t });
+  };
 
   // --- render --------------------------------------------------------------------------------------------------------
   function render(s) {
@@ -214,13 +274,14 @@ export function mount(el, ctx) {
     checkList.replaceChildren(...checks.map(([ok, t]) => h("div", { class: "ui-row", style: "gap:8px;flex-wrap:nowrap" },
       h("span", { style: `flex:none;width:1.2em;color:${ok ? "#2a9d4b" : "#d33"}`, text: ok ? "✓" : "✗" }), h("span", { class: ok ? "ui-muted" : "", text: t }))));
     guide.open = okN < 3 ? true : guide.open;
+    guide.style.display = okN === checks.length ? "none" : "";
 
-    if (!baseline) { baseline = { owner_id: s.config.owner_id, guild_id: s.config.guild_id, reply_mode: s.config.reply_mode, ...Object.fromEntries(FLAGS.map((k) => [k, !!s.config[k]])) }; fill(baseline); refreshDirty(); }
+    if (!baseline) { baseline = { owner_id: s.config.owner_id, guild_id: s.config.guild_id, reply_mode: s.config.reply_mode, workspace_dir: s.config.workspace_dir || "", ...Object.fromEntries(FLAGS.map((k) => [k, !!s.config[k]])) }; fill(baseline); refreshDirty(); }
 
     layoutBox.replaceChildren(
       kv(L.server, s.layout.guild || "—"),
-      kv(L.sysCh, ""), h("div", { class: "ui-row", style: "gap:6px;flex-wrap:wrap" }, ...(s.layout.system.length ? s.layout.system.map((n) => chip("#" + n)) : [h("span", { class: "ui-muted ui-small", text: L.none })])),
-      kv(L.projCh, ""), h("div", { class: "ui-row", style: "gap:6px;flex-wrap:wrap" }, ...(s.layout.projects.length ? s.layout.projects.map((n) => chip("#" + n)) : [h("span", { class: "ui-muted ui-small", text: L.none })])));
+      kv(L.sysCh, ""), h("div", { class: "ui-row", style: "gap:6px;flex-wrap:wrap" }, ...(s.layout.system.length ? s.layout.system.map((n) => chip("#" + n, s.layout.links[n])) : [h("span", { class: "ui-muted ui-small", text: L.none })])),
+      kv(L.projCh, ""), h("div", { class: "ui-row", style: "gap:6px;flex-wrap:wrap" }, ...(s.layout.projects.length ? s.layout.projects.map((n) => chip("#" + n, s.layout.links["p:" + n])) : [h("span", { class: "ui-muted ui-small", text: L.none })])));
 
     inviteBox.replaceChildren(h("p", { class: "ui-small ui-muted", style: "margin:0", text: L.inviteH }), h("p", { class: "ui-small ui-muted", style: "margin:0", text: L.permList }));
     if (s.invite) {
