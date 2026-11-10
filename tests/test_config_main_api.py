@@ -207,3 +207,13 @@ def test_tool_approvals_setting_defaults_on_and_is_a_strict_boolean(api):
         assert code == 400 and out["error"] == "bad_flag", bad
     r = api.handle(api.ctx, "POST", "config", {}, {"tool_approvals": False})
     assert r["config"]["tool_approvals"] is False
+
+
+def test_api_status_invite_audit_and_layout(api):
+    (api.dir / "status.json").write_text(json.dumps({"at": __import__("time").time(), "connected": True, "bot_id": "1569439183880323073"}))
+    (api.dir / "audit.jsonl").write_text('{"at": 1, "cmd": "tasks", "target": "x", "result": "ok"}\nnot json\n{"at": 2, "cmd": "cron", "target": "y", "result": "ok"}\n')
+    st = api.handle(api.ctx, "GET", "status", {}, None)
+    assert "client_id=1569439183880323073" in st["invite"] and f"permissions={st['permissions']}" in st["invite"]
+    assert [a["cmd"] for a in st["audit"]] == ["cron", "tasks"] and st["age"] < 5
+    (api.dir / "status.json").write_text(json.dumps({"bot_id": "evil&x=1"}))
+    assert api.handle(api.ctx, "GET", "status", {}, None)["invite"] == ""

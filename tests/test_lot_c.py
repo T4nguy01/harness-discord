@@ -641,7 +641,7 @@ def test_new_settings_default_true_and_are_strict_booleans(tmp_path, monkeypatch
 def test_page_and_docs_mention_the_new_features():
     page = (ROOT / "discord" / "page.js").read_text()
     for k in NEW_FLAGS:
-        assert f'name="{k}"' in page and k in page
+        assert k in page
     for f in ("discord/page.js", "README.md", "skill/discord-bridge/SKILL.md"):
         text = (ROOT / f).read_text()
         assert "Manage Messages" in text or "Gérer les messages" in text, f

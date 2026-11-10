@@ -9,6 +9,7 @@ from pathlib import Path
 
 SERVICE = "harness-discord"
 MODES = ("live", "final")
+PERMISSIONS = 326686043216   # View/Manage Channels, Manage Roles, Send (+ in threads), Create/Manage Threads, History, Reactions, Embeds, Manage Messages
 FLAGS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive", "tool_approvals")
 
 
@@ -23,6 +24,28 @@ def _write(path, data):
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(json.dumps(data, indent=2))
     os.replace(tmp, path)
+
+
+def _audit(d, n=10):
+    out = []
+    for name in ("audit.jsonl.1", "audit.jsonl"):
+        try:
+            lines = (d / name).read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for ln in lines[-n:]:
+            try:
+                r = json.loads(ln)
+                out.append({"at": int(r.get("at", 0)), "cmd": str(r.get("cmd", ""))[:40], "target": str(r.get("target", ""))[:120], "result": str(r.get("result", ""))[:80]})
+            except (ValueError, TypeError, AttributeError):
+                continue
+    return out[-n:][::-1]
+
+
+def _invite(bot_id):
+    if not re.fullmatch(r"\d{15,25}", str(bot_id or "")):
+        return ""
+    return f"https://discord.com/oauth2/authorize?client_id={bot_id}&permissions={PERMISSIONS}&scope=bot+applications.commands"
 
 
 def _service():
@@ -46,6 +69,11 @@ def _status(ctx):
         "connected": bool(st.get("connected")) and age is not None and age < 90,
         "running": st.get("running", 0),
         "version": st.get("version", ""),
+        "age": int(age) if age is not None else None,
+        "bot_id": str(st.get("bot_id", "")),
+        "invite": _invite(st.get("bot_id")),
+        "permissions": PERMISSIONS,
+        "audit": _audit(d),
         "error": str(st.get("error", ""))[:300],
         "keys": {"token": bool(ctx["secret"]("DISCORD_BOT_TOKEN")), "password": bool(ctx["secret"]("HARNESS_PASSWORD"))},
         "config": {
@@ -55,7 +83,8 @@ def _status(ctx):
             **{k: cfg.get(k, True) for k in FLAGS},
         },
         "layout": {"guild": lay.get("guild", ""), "projects": sorted(lay.get("projects", {})),
-                   "system": [k for k in ("alerts", "notifications", "crons", "agents") if lay.get(k)]},
+                   "system": [k for k in ("alerts", "notifications", "crons", "agents") if lay.get(k)],
+                   "dashboard": bool(state.get("dashboard"))},
         "threads": len(state.get("threads", {})),
     }
 
