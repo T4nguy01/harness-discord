@@ -9,17 +9,17 @@ The bridge is a service (`harness-discord`) that signs in to Harness like the ow
 (settings, status) in `<workspace>/extensions/discord/`. Secrets live only in Settings -> Keys:
 `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (never print them, never write them in a file or a message).
 Settings (not secret): `<state>/extensions/discord/config.json` (`owner_id`, `guild_id`, `reply_mode`, `relay_feed`,
-`relay_agents`, `relay_bell`); status: `status.json` next to it. The Discord page edits them. The bridge re-reads the file every 10 s, but a setting takes effect when it is used:
-`owner_id`, `reply_mode`, `relay_feed`, `relay_bell`: within 10 s; `relay_agents`: within 30 s (agents are polled every third
+`relay_agents`, `relay_bell`, `mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard`; all booleans, on by default); status: `status.json` next to it. The Discord page edits them. The bridge re-reads the file every 10 s, but a setting takes effect when it is used:
+`owner_id`, `reply_mode`, `relay_feed`, `relay_bell`, `reactions`, `answer_buttons`, `dashboard`: within 10 s (`dashboard`: the message is refreshed within 10 minutes); `mirror_web_sessions`: at the next channel sync (Resync, or every 10 minutes); `relay_agents`: within 30 s (agents are polled every third
 pass); `guild_id`: at the next channel sync (Resync button: within 10 s, otherwise every 10 minutes); keys
 (`DISCORD_BOT_TOKEN`, `HARNESS_PASSWORD`): only after a restart of the service. The *Test message* and *Resync*
 buttons leave a flag file that the bridge picks up within 10 s.
 
 ## Set up (the user does the Discord side)
 1. Discord developer portal: new application -> Bot -> enable "Message Content Intent" -> copy the token.
-2. Invite URL with scopes `bot applications.commands` and permissions integer `326686035024` (never Administrator):
+2. Invite URL with scopes `bot applications.commands` and permissions integer `326686043216` (never Administrator):
    View Channels, Manage Channels, Manage Roles (private overwrites), Send Messages, Send Messages in Threads, Create
-   Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links. The server should be the user's own.
+   Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links, Manage Messages (to pin the dashboard; optional). The server should be the user's own.
 3. Keys: add `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (the Harness password). Two-step sign-in must be off
    (`maxxing 2fa status`): the bridge cannot answer it.
 4. `sh <workspace>/extensions/discord/install.sh` (root): virtualenv + systemd service (restarts it if already running).
@@ -27,6 +27,16 @@ buttons leave a flag file that the bridge picks up within 10 s.
    `maxxing` must be on the service PATH (`command -v maxxing`; the unit uses `/usr/local/bin:/usr/bin:/bin`).
 5. The owner's Discord id in the Discord page. The bot then creates private categories: *Harness* (alerts,
    notifications, crons, agents) and *Projects* (one channel per Harness project, one thread per session).
+
+## What the bridge does besides sessions
+- Web mirror (`mirror_web_sessions`): a thread per recent web session (30 days, 50 max), named `<project emoji> topic · title`,
+  renamed with the title, archived / restored with the session. Only a welcome message, no history.
+- Reactions (`reactions`): ⏳ then ✅ / ❌ on the user's message; an edited message gets one ✏️ and is not sent again.
+- Buttons under the final answer (`answer_buttons`): Regenerate, and Stop when a turn waits behind. Gone at the next turn.
+- Commands with autocomplete: `/model` (free names like `opus`, `Sonnet 5.5`) and `/new [title] [topic]`; message menus
+  "Send to Claude" and "New session from message"; forwarded messages are sent marked `[Forwarded]`.
+- Presence ("N sessions running" / "idle") and a pinned dashboard in `alerts` (`dashboard`; the pin needs Manage Messages,
+  without it the dashboard is posted unpinned: look for "dashboard not pinned" in the journal).
 
 ## Check / fix
 - `systemctl status harness-discord`, `journalctl -u harness-discord -n 50 --no-pager` (never paste a token).

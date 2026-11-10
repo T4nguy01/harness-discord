@@ -48,6 +48,9 @@ class Store:
         self.data["threads"][sid] = {"channel": str(channel), "path": path, "parent": str(parent)}
         self.save()
 
+    def link_of(self, sid: str) -> dict:
+        return self.data["threads"].get(sid) or {}
+
     def unlink(self, sid: str) -> None:
         if self.data["threads"].pop(sid, None) is not None:
             self.save()

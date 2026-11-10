@@ -14,8 +14,26 @@ thread per session.
   when the turn ends; the answer arrives as a new message. Long answers are split in several messages, tables become lists.
 - **Files and voice**: attachments are saved in the topic (`attachments/`) and passed to Claude; Discord voice messages
   are transcribed by Harness.
-- **Commands**: `/new [title]`, `/sessions`, `/stop`, `/close`, `/model [id]`, `/status`, `/help` (French or English,
-  following the Harness language).
+- **Commands**: `/new [title] [topic]`, `/sessions`, `/stop`, `/close`, `/model [name]`, `/status`, `/help` (French or English,
+  following the Harness language). `/model` and the `topic` of `/new` have **autocomplete** (up to 25 choices, filtered as you
+  type); `/model` also takes a free name like `opus` or `Sonnet 5.5` (same resolution as Telegram), otherwise it lists the choices.
+- **Message menus** (right-click a message -> Apps): **Send to Claude** (the text and files of that message go to the
+  current session, or you pick the topic in a project channel) and **New session from message**. Owner only, answers are private.
+- **Forwarded and quoted messages**: a reply passes the quoted text; a message forwarded with Discord's Forward is sent
+  with a `[Forwarded]` mark (`[Transféré]` in French) and its attachments.
+- **Status reactions** (`reactions`): ⏳ on your message when Claude starts, replaced by ✅ at the end (❌ on an error).
+  If you edit a message already sent to Claude, the edit is **not** sent again: the bot adds one ✏️ reaction (a message edit has no
+  interaction to answer with) and logs it.
+- **Answer buttons** (`answer_buttons`): under the final answer, 🔁 **Regenerate** (sends your last message again) and, when
+  another turn waits behind it, ⏹ **Stop**. They disappear when the next turn starts. Owner only.
+- **Web mirror** (`mirror_web_sessions`): every 10 minutes (and on **Resync channels**) a thread is created in the project channel
+  for each session opened in the web UI in the last 30 days (50 at most, like Telegram), named `<project emoji> topic · title`.
+  Only a welcome message (title and link) is posted, not the history; writing in the thread continues the session, and new
+  turns started on the web ring the bell. The thread is renamed when the title changes, archived when the session is
+  archived in Harness, and brought back (or recreated if you deleted it) when it is un-archived.
+- **Presence**: the bot's status reads "N sessions running" or "idle", refreshed at most every 30 s and only when it changes.
+- **Dashboard** (`dashboard`): a message pinned in `alerts` (sessions running, threads, jobs, agents, last relay), edited at most
+  every 10 minutes and only when something changed. Pinning needs **Manage Messages**; without it the message is still posted, just not pinned.
 - **Alerts and notifications**: the Harness feed is posted in `alerts` (server problems, updates, sign-ins),
   `crons` (job reports), `agents` (requests with **Allow / Deny** buttons, failures) and `notifications` (everything else).
   An alert handled in Harness is updated in Discord too. They are posted as **embeds**: alerts and notifications are
@@ -27,8 +45,8 @@ thread per session.
 
 Not possible from outside the server: the two-step sign-in approval (it needs the product's internals).
 
-**Opt-in.** The relays are settings on the Discord page: `relay_feed` (alerts, approvals, job reports), `relay_agents`
-(agent results) and `relay_bell` (bell in session threads) can each be switched off there. The **Send a test message** button
+**Opt-in.** The relays and the extras are settings on the Discord page (`mirror_web_sessions`, `reactions`, `answer_buttons` and `dashboard` are on by default): `relay_feed` (alerts, approvals, job reports), `relay_agents`
+(agent results) and `relay_bell` (bell in session threads) can each be switched off there, as can the web mirror, the reactions, the answer buttons and the dashboard. The **Send a test message** button
 and the relays are the only things that post on their own: with them off, and as long as you write nothing, nothing is sent
 to Discord. The bridge only ever answers the owner id you set.
 
@@ -44,8 +62,8 @@ signs in to Harness with your password. Read it first; the community library wil
 - A Discord application with a bot, **Message Content Intent** on, invited with the scopes `bot` and
   `applications.commands`. Do **not** give Administrator. The bot needs exactly: View Channels, Manage Channels,
   Manage Roles (only to set the private permission overwrites on the channels it creates), Send Messages, Send Messages in
-  Threads, Create Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links
-  (permissions integer `326686035024`). Without Manage Roles, create the *Harness* and *Projects* categories yourself,
+  Threads, Create Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links, Manage Messages
+  (only to pin the dashboard; the bridge works without it) (permissions integer `326686043216`). Without Manage Roles, create the *Harness* and *Projects* categories yourself,
   private to you and the bot: the bridge reuses them.
 - In Harness **Settings -> Keys**: `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD`. The bridge signs in to Harness like you do,
   so keep two-step sign-in off. Neither key is ever stored in this repository or in the extension's files.

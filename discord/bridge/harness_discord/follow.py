@@ -10,7 +10,7 @@ import httpx
 
 from . import fmt
 from .discord_api import DiscordError
-from .harness import HarnessError, check_sid
+from .harness import SID, HarnessError, check_sid
 
 log = logging.getLogger("harness_discord.follow")
 
@@ -41,20 +41,34 @@ class Follower:
     fails: int = 0                                     # consecutive stream failures
     last_ok: float = field(default_factory=time.time)  # last time the stream answered
     saved_at: float = 0.0
+    marks: list = field(default_factory=list)          # [(channel, message)] of the user messages waiting for their final reaction
 
 
 
 class FollowMixin:
     """Turn following for `Bot` (uses its h, rest, store, cfg, followers, follow_end, msg_session, t, err, thread_name)."""
 
-    async def follow(self, sid: str, channel: str, offset: int, expect: int) -> None:
+    async def react_state(self, mark: tuple[str, str] | None, old: str, new: str) -> None:
+        """Status reaction on the user's message: remove `old`, add `new` (setting `reactions`)."""
+        if not mark or not mark[1] or not self.cfg.get("reactions", True):
+            return
+        if old:
+            await self.rest.unreact(mark[0], mark[1], old)
+        if new:
+            await self.rest.react(mark[0], mark[1], new)
+
+    async def follow(self, sid: str, channel: str, offset: int, expect: int, mark: tuple[str, str] | None = None) -> None:
         f = self.followers.get(sid)
         if f:
             f.expect += expect
             f.active_at = time.time()
+            if mark and mark[1]:
+                f.marks.append(mark)
             self.persist(f, force=True)
             return
         f = Follower(sid=sid, channel=channel, offset=offset, expect=expect, started=time.time())
+        if mark and mark[1]:
+            f.marks.append(mark)
         self.followers[sid] = f
         self.persist(f, force=True)
         f.typing = asyncio.create_task(self._typing(f))
@@ -71,7 +85,7 @@ class FollowMixin:
         if not force and now - f.saved_at < FOLLOW_SAVE_EVERY:
             return
         f.saved_at = now
-        saved[f.sid] = {"channel": f.channel, "offset": f.offset, "expect": f.expect, "at": now}
+        saved[f.sid] = {"channel": f.channel, "offset": f.offset, "expect": f.expect, "at": now, "marks": [list(m) for m in f.marks[:10]]}
         self.store.save()
 
     def resume_followers(self) -> None:
@@ -83,6 +97,7 @@ class FollowMixin:
                     continue
                 check_sid(sid)
                 f = Follower(sid=sid, channel=str(v["channel"]), offset=int(v["offset"]), expect=max(1, int(v["expect"])), started=time.time())
+                f.marks = [(str(a), str(b)) for a, b in (v.get("marks") or [])[:10]]
             except (KeyError, TypeError, ValueError, HarnessError):
                 saved.pop(sid, None)
                 continue
@@ -145,6 +160,7 @@ class FollowMixin:
                         f.expect = 0
                         break
                     await asyncio.sleep(3)
+            await self.clear_marks(f)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -158,6 +174,34 @@ class FollowMixin:
             self.follow_end[f.sid] = now
             for k in [k for k, t in self.follow_end.items() if now - t > 3600]:     # the bell only looks at recent ends
                 del self.follow_end[k]
+
+    async def clear_marks(self, f: Follower) -> None:
+        """The follower ends (stop, give-up) with messages still marked as waiting: take the hourglass off."""
+        marks, f.marks = f.marks, []
+        for mark in marks:
+            try:
+                await self.react_state(mark, "⏳", "")
+            except DiscordError:
+                pass
+
+    async def clear_buttons(self, sid: str) -> None:
+        """The answer buttons of the previous turn go away when the next turn starts."""
+        old = self.answer_msg.pop(sid, None)
+        if old:
+            try:
+                await self.rest.edit(old[0], old[1], components=[])
+            except DiscordError:
+                pass
+
+    def answer_buttons(self, sid: str, more: bool) -> list[dict] | None:
+        """Stop (only while another turn is queued behind this answer) and Regenerate, under the final answer."""
+        if not self.cfg.get("answer_buttons", True) or not SID.fullmatch(sid or ""):
+            return None
+        btns = []
+        if more:
+            btns.append({"type": 2, "style": 4, "label": "⏹ " + self.t("btn_stop"), "custom_id": f"ab:stop:{sid}"})
+        btns.append({"type": 2, "style": 2, "label": "🔁 " + self.t("btn_regen"), "custom_id": f"ab:regen:{sid}"})
+        return [{"type": 1, "components": btns}]
 
     async def _event(self, f: Follower, ev: dict) -> None:
         """One event of the session; whatever goes wrong with it, the next ones are still handled."""
@@ -174,6 +218,7 @@ class FollowMixin:
         typ = ev.get("type")
         if typ == "user":
             f.cur, f.steps, f.last_text, f.started = [], 0, "", time.time()
+            await self.clear_buttons(f.sid)
         elif typ == "assistant":
             f.cur.append(ev.get("text", ""))
             f.last_text = ev.get("text", "") or f.last_text
@@ -210,6 +255,11 @@ class FollowMixin:
         finally:                                               # even if Discord failed, this turn is over
             f.cur, f.steps = [], 0
             f.expect = max(0, f.expect - 1)
+            mark = f.marks.pop(0) if f.marks else None
+        try:
+            await self.react_state(mark, "⏳", "✅" if ev.get("ok", True) else "❌")
+        except DiscordError:
+            pass
         await self.retitle(f)
 
     async def _finish(self, f: Follower, ev: dict) -> None:
@@ -226,9 +276,13 @@ class FollowMixin:
         text = "\n\n".join(x for x in f.cur if x.strip()) or f.last_text
         if not ok and not text:
             text = "⚠ " + self.t("failed")
-        for part in fmt.chunk(text):
-            sent = await self.rest.send(f.channel, part)
+        parts = fmt.chunk(text)
+        for n, part in enumerate(parts):
+            comps = self.answer_buttons(f.sid, f.expect > 1) if n == len(parts) - 1 else None
+            sent = await self.rest.send(f.channel, part, components=comps)
             self.remember(sent["id"], f.sid)
+            if comps:
+                self.answer_msg[f.sid] = (f.channel, sent["id"])
 
     def remember(self, mid: str, sid: str) -> None:
         self.msg_session[mid] = sid

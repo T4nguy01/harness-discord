@@ -14,6 +14,7 @@ class FakeRest:
     def __init__(self):
         self.sent, self.edits, self.threads, self.responses, self.deleted, self.renamed = [], [], [], [], [], []
         self.n = 100
+        self.reactions, self.unreacted, self.modified, self.pinned = [], [], [], []
 
     async def send(self, channel, content="", *, components=None, reply_to=None, silent=False, embeds=None):
         self.n += 1
@@ -26,6 +27,23 @@ class FakeRest:
 
     async def typing(self, channel):
         pass
+
+    async def react(self, channel, message, emoji):
+        self.reactions.append((channel, message, emoji))
+
+    async def unreact(self, channel, message, emoji):
+        self.reactions.remove((channel, message, emoji)) if (channel, message, emoji) in self.reactions else None
+        self.unreacted.append((channel, message, emoji))
+
+    async def modify_channel(self, channel, **fields):
+        self.modified.append((channel, fields))
+        return {}
+
+    async def pin(self, channel, message):
+        self.pinned.append((channel, message))
+
+    async def autocomplete(self, i, choices):
+        self.responses.append(("auto", choices, None, None))
 
     async def start_thread(self, channel, name, message=None):
         self.threads.append((channel, name, message))

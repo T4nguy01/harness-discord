@@ -15,6 +15,7 @@ from . import __version__, config
 
 from . import fmt
 from .bell import Bell
+from .dashboard import Dashboard
 from .discord_api import DiscordError
 from .harness import HarnessError
 
@@ -83,6 +84,10 @@ class Relay:
         self.n = 0
         self.tries: dict[int, int] = {}
         self.bell = Bell(bot)
+        self.dashboard = Dashboard(bot, self)
+        self._sessions: tuple[float, list] = (0.0, [])
+        self.presence_at = 0.0
+        self.presence_n: int | None = None
 
     @property
     def st(self) -> dict:
@@ -110,7 +115,8 @@ class Relay:
             if self.n % 3 == 0 and self.bot.cfg.get("relay_agents", True):
                 await self.agents()
 
-        for name, part in (("feed", feed), ("bell", bell), ("agents", agents)):
+        for name, part in (("feed", feed), ("bell", bell), ("agents", agents), ("presence", self.presence),
+                           ("dashboard", self.dashboard.tick)):
             try:
                 await part()
             except (HarnessError, DiscordError) as e:
@@ -125,6 +131,26 @@ class Relay:
             except Exception:  # noqa: BLE001
                 log.exception("relay status")
         self.n += 1
+
+    async def sessions_cached(self, max_age: float = 30) -> list[dict]:
+        """GET /api/sessions, shared by the presence and the dashboard (at most one call per `max_age` seconds)."""
+        at, items = self._sessions
+        if time.time() - at >= max_age:
+            items = await self.bot.h.request("GET", "/api/sessions")
+            self._sessions = (time.time(), items)
+        return items
+
+    async def presence(self) -> None:
+        """The bot's status line: "N sessions running" / "idle". At most once per 30 s (Discord allows 5 per 20 s), only when it changed."""
+        if time.time() - self.presence_at < 30:
+            return
+        n = sum(1 for s in await self.sessions_cached(30) if s.get("state") == "running")
+        if n == self.presence_n:
+            return
+        t = self.bot.t
+        text = t("presence_idle") if n == 0 else t("presence_1") if n == 1 else t("presence_n", n=n)
+        await self.bot.gw.update_presence(text, "online" if n else "idle")
+        self.presence_n, self.presence_at = n, time.time()
 
     def reload(self) -> None:
         """Settings changed in the Harness page apply without a restart."""
@@ -180,7 +206,9 @@ class Relay:
                     embed, comps = render(e, self.bot.web_url)
                     m = await self.bot.rest.send(ch, "", embeds=[embed], components=comps or None,
                                                  silent=e.get("level") in QUIET)
-                    st["posted"][str(e["id"])] = {"channel": ch, "message": m["id"], "done": bool(e.get("resolved"))}
+                    st["posted"][str(e["id"])] = {"channel": ch, "message": m["id"], "done": bool(e.get("resolved")),
+                                                  "buttons": any("custom_id" in c for row in comps for c in row["components"])}
+                    st["last_post"] = time.time()
             except DiscordError as err:
                 if err.transient:
                     n = self.tries[e["id"]] = self.tries.get(e["id"], 0) + 1
@@ -196,9 +224,14 @@ class Relay:
             st["feed_last"] = e["id"]
         for eid, info in list(st["posted"].items()):             # an alert handled elsewhere: show how it ended
             e = byid.get(int(eid))
-            if e and e.get("resolved") and not info.get("done"):
+            read_only = (e and e.get("read") and info.get("buttons") and not info.get("done") and not e.get("resolved")
+                         and not str(e.get("ref") or "").startswith("approval:"))        # "seen" on the web: its button goes
+            if e and (e.get("resolved") or read_only) and not info.get("done"):
                 try:
                     embed, comps = render(e, self.bot.web_url)
+                    if read_only:
+                        embed["color"] = DONE_COLOR
+                        embed["fields"] = [{"name": "✓", "value": self.bot.t("seen")}]
                     await self.bot.rest.edit(info["channel"], info["message"], embeds=[embed], components=[])
                 except DiscordError:
                     pass
@@ -265,6 +298,7 @@ class Relay:
                     embed["footer"] = {"text": f"{m['cost']:.2f} $"}
                 sent = await self.bot.rest.send(info["thread"], "", embeds=[embed], silent=False)
                 self.bot.remember(sent["id"], "agent:" + path)
+                self.st["last_post"] = time.time()
             info["seen"] = m["at"]
             self.bot.store.save()                                 # posted: never again after a restart
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 SERVICE = "harness-discord"
 MODES = ("live", "final")
+FLAGS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard")
 
 
 def _read(path, default):
@@ -51,9 +52,7 @@ def _status(ctx):
             "owner_id": str(cfg.get("owner_id", "")),
             "guild_id": str(cfg.get("guild_id", "")),
             "reply_mode": cfg.get("reply_mode", "live"),
-            "relay_feed": cfg.get("relay_feed", True),
-            "relay_agents": cfg.get("relay_agents", True),
-            "relay_bell": cfg.get("relay_bell", True),
+            **{k: cfg.get(k, True) for k in FLAGS},
         },
         "layout": {"guild": lay.get("guild", ""), "projects": sorted(lay.get("projects", {})),
                    "system": [k for k in ("alerts", "notifications", "crons", "agents") if lay.get(k)]},
@@ -82,7 +81,7 @@ def handle(ctx, method, path, query, body):
             if body["reply_mode"] not in MODES:
                 return 400, {"error": "bad_mode", "message": "reply_mode: live or final."}
             cfg["reply_mode"] = body["reply_mode"]
-        for k in ("relay_feed", "relay_agents", "relay_bell"):
+        for k in FLAGS:
             if k in body:
                 if not isinstance(body[k], bool):
                     return 400, {"error": "bad_flag", "message": f"{k}: true or false."}

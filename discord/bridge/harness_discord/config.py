@@ -46,7 +46,12 @@ DEFAULTS = {
     "relay_feed": True,      # post the Harness notifications feed (alerts, approvals, job reports)
     "relay_agents": True,    # post the results of agents (one thread per agent)
     "relay_bell": True,      # ring in the thread when a turn started elsewhere (web UI) ends in a session with its bell on
+    "mirror_web_sessions": True,   # a thread for every recent session opened in the web UI (renamed / archived with it)
+    "reactions": True,       # status reactions on your message: hourglass while Claude works, then check mark / cross
+    "answer_buttons": True,  # Stop / Regenerate buttons under the final answer of a turn
+    "dashboard": True,       # a pinned dashboard message in the alerts channel
 }
+BOOLS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard")
 
 
 def load_settings() -> dict:

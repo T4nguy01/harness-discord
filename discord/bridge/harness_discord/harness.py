@@ -101,6 +101,11 @@ class Harness:
     async def tree(self) -> list[dict]:
         return (await self.request("GET", "/api/workspace/tree"))["projects"]
 
+    async def models(self) -> list[tuple[str, str]]:
+        """(id, label) of the models Harness offers (GET /api/claude/status), without the default."""
+        d = await self.request("GET", "/api/claude/status")
+        return [(m["id"], m.get("label") or m["id"]) for m in d.get("models", []) if isinstance(m, dict) and m.get("id")]
+
     async def sessions(self, path: str = "") -> list[dict]:
         return await self.request("GET", "/api/sessions", params={"path": path} if path else None)
 

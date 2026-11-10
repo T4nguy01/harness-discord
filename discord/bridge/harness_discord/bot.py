@@ -17,7 +17,8 @@ from .discord_api import DiscordError, Gateway, Rest
 from .follow import (FOLLOW_GIVE_UP, FOLLOW_MAX_FAILS, FOLLOW_RESUME_MAX, FOLLOW_SAVE_EVERY, STATUS_EVERY,  # noqa: F401
                      Follower, FollowMixin)
 from .harness import Harness, HarnessError
-from .relay import Relay, render
+from .mirror import Mirror
+from .relay import DONE_COLOR, Relay, render
 from .store import Store
 from .texts import T
 
@@ -26,6 +27,7 @@ log = logging.getLogger("harness_discord.bot")
 VOICE_FLAG = 1 << 13          # IS_VOICE_MESSAGE
 PENDING_TTL = 600
 EID = re.compile(r"[0-9]{1,20}")
+AB = re.compile(r"ab:(stop|regen):([\w-]{1,64})", re.ASCII)
 
 
 class Bot(CommandsMixin, FollowMixin):
@@ -44,6 +46,12 @@ class Bot(CommandsMixin, FollowMixin):
         self.sync_task: asyncio.Task | None = None
         self.relay = Relay(self)
         self.relay_task: asyncio.Task | None = None
+        self.mirror = Mirror(self)
+        self.emojis: dict[str, str] = {}                            # project -> emoji (thread names)
+        self.forwarded: OrderedDict[str, str] = OrderedDict()       # Discord message id -> channel, for messages sent to Claude
+        self.edit_marked: set[str] = set()                          # forwarded messages already marked as edited
+        self.last_user: OrderedDict[str, str] = OrderedDict()       # session -> last text sent from Discord (Regenerate)
+        self.answer_msg: dict[str, tuple[str, str]] = {}            # session -> (channel, message) carrying answer buttons
 
     def t(self, key: str, **kw: Any) -> str:
         s = T[self.lang].get(key) or T["en"][key]
@@ -86,10 +94,12 @@ class Bot(CommandsMixin, FollowMixin):
             log.warning("the bot is in several servers: set guild_id in config.json")
             return
         projects = [{"name": p["name"], "emoji": p.get("emoji") or ""} for p in await self.h.tree()]
+        self.emojis.update({p["name"]: p["emoji"] for p in projects})
         await layout.ensure(self.rest, self.lay, guild, self.owner, self.gw.user_id, projects, self.lang,
                             state_lost=self.store.damaged)
         self.store.damaged = False
         self.store.save()
+        await self.mirror.sync()
 
     def project_of(self, channel: str) -> str:
         for name, cid in self.lay.get("projects", {}).items():
@@ -100,6 +110,8 @@ class Bot(CommandsMixin, FollowMixin):
     async def dispatch(self, name: str, d: dict) -> None:
         if name == "MESSAGE_CREATE":
             await self.on_message(d)
+        elif name == "MESSAGE_UPDATE":
+            await self.on_message_update(d)
         elif name == "INTERACTION_CREATE":
             await self.on_interaction(d)
         elif name in ("THREAD_DELETE", "CHANNEL_DELETE"):
@@ -116,6 +128,7 @@ class Bot(CommandsMixin, FollowMixin):
     async def topics(self) -> list[dict]:
         out = []
         for p in await self.h.tree():
+            self.emojis[p["name"]] = p.get("emoji") or ""
             for tp in p.get("topics", []):
                 out.append({"path": tp["path"], "project": p["name"], "name": tp["name"], "emoji": p.get("emoji") or "",
                             "desc": tp.get("description") or "", "running": tp.get("running", 0), "n": tp.get("session_count", 0)})
@@ -189,7 +202,8 @@ class Bot(CommandsMixin, FollowMixin):
                 project = self.project_of((await self.rest.channel(thread)).get("parent_id", ""))
             except DiscordError:
                 pass
-        p = self.pending[pid] = Pending(text=m.get("content", ""), files=m.get("attachments", []), channel=channel,
+        text, files = self.incoming(m)
+        p = self.pending[pid] = Pending(text=text, files=files, channel=channel,
                                         message=m["id"], in_dm=in_dm, thread=thread, project=project)
         only = [x for x in await self.topics() if x["project"] == project] if project else []
         if len(only) == 1:                                      # one topic in that project: no question
@@ -239,12 +253,18 @@ class Bot(CommandsMixin, FollowMixin):
 
     async def start(self, p: Pending, path: str) -> bool:
         """Create the session and follow it. False when it could not be started."""
+        mark = (p.channel, p.message) if p.message else None
+        await self.react_state(mark, "", "⏳")
         try:
             files, voice = await self.ingest(path, p.files, p.channel)
             s = await self.h.create_session(path, message=p.text, attachments=files, voice=voice, title=p.title)
         except HERR as e:
+            await self.react_state(mark, "⏳", "❌")
             await self.rest.send(p.channel, self.err(e))
             return False
+        self.note_forwarded(p.message, p.channel)
+        if p.text:
+            self.last_user[s["id"]] = p.text
         sid = s["id"]
         out = p.channel
         ok = True
@@ -265,47 +285,97 @@ class Bot(CommandsMixin, FollowMixin):
         else:
             self.store.set_dm(sid, p.channel)
         if p.text or files or voice:
-            await self.follow(sid, out, 0, 1)
-        elif ok:
+            await self.follow(sid, out, 0, 1, mark=mark)
+        else:
+            await self.react_state(mark, "⏳", "")
+        if not (p.text or files or voice) and ok:
             await self.rest.send(out, self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")))
         return ok
 
-    @staticmethod
-    def thread_name(path: str, title: str) -> str:
-        return f"{path.split('/topics/', 1)[-1]} · {title}"[:100]
+    def thread_name(self, path: str, title: str) -> str:
+        """`<project emoji> topic · title` (no emoji when the project has none)."""
+        project = path.split("/")[1] if path.startswith("projects/") else ""
+        emoji = self.emojis.get(project, "")
+        return f"{emoji + ' ' if emoji else ''}{path.split('/topics/', 1)[-1]} · {title}"[:100]
+
+    def incoming(self, m: dict) -> tuple[str, list[dict]]:
+        """Text and attachments of a Discord message, forwarded messages (snapshots) included, marked [Forwarded]."""
+        text = (m.get("content") or "").strip()
+        files = list(m.get("attachments") or [])
+        for snap in m.get("message_snapshots") or []:
+            inner = snap.get("message") if isinstance(snap, dict) else None
+            if not isinstance(inner, dict):
+                continue
+            body = (inner.get("content") or "").strip()
+            if body:
+                quoted = "\n".join("> " + ln for ln in fmt.clip(body, 2000).splitlines())
+                text = (text + "\n\n" if text else "") + f"{self.t('forwarded')}\n{quoted}"
+            files += list(inner.get("attachments") or [])
+        return text, files
+
+    def note_forwarded(self, mid: str, channel: str) -> None:
+        if not mid:
+            return
+        self.forwarded[mid] = channel
+        while len(self.forwarded) > 500:
+            self.edit_marked.discard(self.forwarded.popitem(last=False)[0])
 
     async def forward(self, sid: str, m: dict, channel: str) -> None:
         async with self.locks.setdefault(sid, asyncio.Lock()):       # two quick messages keep their order
             await self._forward(sid, m, channel)
 
     async def _forward(self, sid: str, m: dict, channel: str) -> None:
+        mark = (channel, m["id"]) if m.get("id") else None
+        await self.react_state(mark, "", "⏳")
         try:
             s = await self.h.session(sid)
         except HERR as e:
+            await self.react_state(mark, "⏳", "❌")
             if isinstance(e, HarnessError) and e.status == 404:
                 self.store.unlink(sid)
                 return await self.rest.send(channel, self.t("gone"))
             return await self.rest.send(channel, self.err(e))
         if s.get("archived"):
+            await self.react_state(mark, "⏳", "❌")
             return await self.rest.send(channel, self.t("archived_s"))
         try:
             offset = await self.h.tail(sid) if sid not in self.followers else self.followers[sid].offset
-            files, voice = await self.ingest(s["path"], m.get("attachments", []), channel)
-            text = (m.get("content") or "").strip()
+            text, atts = self.incoming(m)
+            files, voice = await self.ingest(s["path"], atts, channel)
             ref = m.get("referenced_message")
             if ref and ref.get("content") and not (ref.get("author") or {}).get("bot"):
                 text = f"> {fmt.clip(ref['content'], 400)}\n\n{text}"
             if not text and not files and not voice:
-                return
+                return await self.react_state(mark, "⏳", "")
             await self.h.send(sid, text or ("(voice)" if voice else "(file)"), attachments=files, voice=voice)
         except HERR as e:
+            await self.react_state(mark, "⏳", "❌")
             return await self.rest.send(channel, self.err(e))
-        await self.follow(sid, channel, offset, 1)
+        self.last_user[sid] = text
+        while len(self.last_user) > 200:
+            self.last_user.popitem(last=False)
+        self.note_forwarded(m.get("id", ""), channel)
+        await self.follow(sid, channel, offset, 1, mark=mark)
 
     # --- interactions (menus, buttons, slash commands) -----------------------------------------------------------
 
+    async def on_message_update(self, d: dict) -> None:
+        """The owner edits a message already handed to Claude: it is not sent again. A reaction says so (an edit has
+        no interaction to answer with), once per message."""
+        mid = str(d.get("id", ""))
+        if (d.get("author") or {}).get("id", self.owner) != self.owner or mid not in self.forwarded or not d.get("edited_timestamp"):
+            return
+        if mid in self.edit_marked:
+            return
+        self.edit_marked.add(mid)
+        log.info("message %s edited after it was sent to Claude: the edit is not sent again", mid)
+        if self.cfg.get("reactions", True):
+            await self.rest.react(self.forwarded[mid], mid, "✏️")
+
     async def on_interaction(self, i: dict) -> None:
         user = (i.get("member") or {}).get("user") or i.get("user") or {}
+        if i["type"] == 4:                                     # autocomplete: choices of the owner only
+            return await self.on_autocomplete(i, user.get("id") == self.owner)
         if user.get("id") != self.owner:
             return await self.rest.respond(i, 4, self.t("not_allowed"), ephemeral=True)
         if i["type"] == 3:
@@ -351,7 +421,13 @@ class Bot(CommandsMixin, FollowMixin):
             except HERR as err:
                 return await self.rest.followup(i, app, self.err(err), ephemeral=True)
             embed, comps = render(e, self.web_url)
+            if action == "seen" and not e.get("resolved"):          # "seen" does not resolve the event: show it as done here
+                embed["color"] = DONE_COLOR
+                embed["fields"] = [{"name": "✓", "value": self.t("seen")}]
+                comps = []
             return await self.rest.edit_original(i, app, "", components=comps, embeds=[embed])
+        if kind == "ab":                                       # buttons under an answer: Stop / Regenerate
+            return await self.on_answer_button(i)
         if kind == "sess":                                     # a session chosen in /sessions
             sid = i["data"]["values"][0]
             await self.rest.respond(i, 7, self.t("sessions_pick"), components=[])
@@ -359,6 +435,37 @@ class Bot(CommandsMixin, FollowMixin):
                 return await self.rest.followup(i, app, self.t("expired"), ephemeral=True)
             say = lambda s: self.rest.followup(i, app, s, ephemeral=True)    # noqa: E731
             return await self.open_session(sid, i["channel_id"], not i.get("guild_id"), say)
+
+    async def on_answer_button(self, i: dict) -> None:
+        m = AB.fullmatch(i["data"]["custom_id"])
+        if not m:
+            return await self.rest.respond(i, 4, self.t("expired"), ephemeral=True)
+        action, sid = m[1], m[2]
+        app = self.gw.app_id
+        await self.rest.respond(i, 6)                           # acknowledge: the message itself changes below
+        say = lambda text: self.rest.followup(i, app, text, ephemeral=True)    # noqa: E731
+        mid = (i.get("message") or {}).get("id", "")
+        try:
+            if action == "stop":
+                s = await self.h.session(sid)
+                if s.get("state") != "running" and not s.get("queue"):
+                    return await say(self.t("stop_none"))
+                await self.h.stop(sid)
+                f = self.followers.get(sid)
+                if f:
+                    f.expect = 0
+                return await say(self.t("stopped"))
+            text = self.last_user.get(sid, "")
+            if not text:
+                return await say(self.t("regen_none"))
+            if self.answer_msg.get(sid, ("", ""))[1] == mid:
+                await self.clear_buttons(sid)
+            await self.forward(sid, {"id": "", "content": text, "attachments": []}, i["channel_id"])
+            await say(self.t("regen_ok"))
+        except HERR as e:
+            await say(self.err(e))
+        except DiscordError as e:
+            log.warning("answer button %s: %s", action, e)
 
     async def forward_pending(self, sid: str, p: Pending) -> None:
         fake = {"id": p.message, "content": p.text, "attachments": p.files}

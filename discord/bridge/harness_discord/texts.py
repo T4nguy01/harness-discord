@@ -33,14 +33,28 @@ T = {
         "opened": "Session **{title}**: {where}",
         "status": "**{title}**\nTopic: {path}\nState: {state} · queue {queue}\nModel: {model}\nCost: {cost:.2f} $ · {turns} turns\n{url}",
         "help": ("**Harness Discord**\nWrite a message: choose the topic, a thread is created and Claude answers in it.\n"
-                 "/new [title] new session · /sessions recent sessions · /stop stop the turn · /close archive the session\n"
-                 "/model [id] show or change the model · /status state of the session · /help this list"),
+                 "/new [title] [topic] new session · /sessions recent sessions · /stop stop the turn · /close archive the session\n"
+                 "/model [name] show or change the model · /status state of the session · /help this list\n"
+                 "Under an answer: Stop, Regenerate. Right-click a message → Apps: Send to Claude, New session from message."),
         "d_new": "New session (asks the topic)", "d_title": "Title of the session",
         "d_sessions": "Recent sessions", "d_stop": "Stop the running turn",
-        "d_close": "Archive the session", "d_model": "Show or change the model", "d_modelid": "Model id or opus / sonnet / haiku",
+        "d_close": "Archive the session", "d_model": "Show or change the model", "d_modelid": "Model name (opus, Sonnet 5.5…) or id",
         "d_status": "State of the session", "d_help": "List the commands",
         "hint_dm": "Write here to talk to Claude.",
         "test_ok": "Test message from Harness: the Discord bridge works.",
+        "forwarded": "[Forwarded]",
+        "mirror_hello": "Session opened in the web interface: **{title}**\n{url}\nWrite here to continue it.",
+        "btn_stop": "Stop", "btn_regen": "Regenerate",
+        "stop_none": "No turn is running.", "regen_none": "I no longer have that message: send it again.",
+        "regen_ok": "Sent again.", "seen": "Seen",
+        "model_unknown": "Unknown model: {model}. Choices: {choices}",
+        "d_newtopic": "Topic of the session",
+        "ctx_send": "Send to Claude", "ctx_new": "New session from message",
+        "ctx_sent": "Sent to Claude.", "ctx_empty": "This message has no text or file.",
+        "presence_1": "1 session running", "presence_n": "{n} sessions running", "presence_idle": "idle",
+        "dash_title": "Harness dashboard", "dash_sessions": "Sessions running", "dash_threads": "Threads",
+        "dash_crons": "Scheduled jobs", "dash_crons_v": "{on} on, {bad} failed", "dash_agents": "Agents",
+        "dash_agents_v": "{n} (running {run}, waiting {wait})", "dash_relay": "Last relay", "dash_never": "nothing yet",
     },
     "fr": {
         "where": "Dans quel topic ?",
@@ -75,13 +89,27 @@ T = {
         "opened": "Session **{title}** : {where}",
         "status": "**{title}**\nTopic : {path}\nÉtat : {state} · file {queue}\nModèle : {model}\nCoût : {cost:.2f} $ · {turns} tours\n{url}",
         "help": ("**Harness Discord**\nÉcris un message : choisis le topic, un fil est créé et Claude y répond.\n"
-                 "/new [titre] nouvelle session · /sessions sessions récentes · /stop arrête le tour · /close archive la session\n"
-                 "/model [id] voir ou changer le modèle · /status état de la session · /help cette liste"),
+                 "/new [titre] [topic] nouvelle session · /sessions sessions récentes · /stop arrête le tour · /close archive la session\n"
+                 "/model [nom] voir ou changer le modèle · /status état de la session · /help cette liste\n"
+                 "Sous une réponse : Stop, Régénérer. Clic droit sur un message → Applications : Envoyer à Claude, Nouvelle session (message)."),
         "d_new": "Nouvelle session (demande le topic)", "d_title": "Titre de la session",
         "d_sessions": "Sessions récentes", "d_stop": "Arrête le tour en cours",
-        "d_close": "Archive la session", "d_model": "Voir ou changer le modèle", "d_modelid": "Id du modèle ou opus / sonnet / haiku",
+        "d_close": "Archive la session", "d_model": "Voir ou changer le modèle", "d_modelid": "Nom du modèle (opus, Sonnet 5.5…) ou id",
         "d_status": "État de la session", "d_help": "Liste des commandes",
         "hint_dm": "Écris ici pour parler à Claude.",
         "test_ok": "Message de test depuis Harness : le pont Discord fonctionne.",
+        "forwarded": "[Transféré]",
+        "mirror_hello": "Session ouverte sur l'interface web : **{title}**\n{url}\nÉcris ici pour la continuer.",
+        "btn_stop": "Stop", "btn_regen": "Régénérer",
+        "stop_none": "Aucun tour en cours.", "regen_none": "Je n'ai plus ce message : renvoie-le.",
+        "regen_ok": "Renvoyé.", "seen": "Vu",
+        "model_unknown": "Modèle inconnu : {model}. Choix : {choices}",
+        "d_newtopic": "Topic de la session",
+        "ctx_send": "Envoyer à Claude", "ctx_new": "Nouvelle session (message)",
+        "ctx_sent": "Envoyé à Claude.", "ctx_empty": "Ce message n'a ni texte ni fichier.",
+        "presence_1": "1 session en cours", "presence_n": "{n} sessions en cours", "presence_idle": "inactif",
+        "dash_title": "Tableau de bord Harness", "dash_sessions": "Sessions en cours", "dash_threads": "Fils",
+        "dash_crons": "Jobs planifiés", "dash_crons_v": "{on} actifs, {bad} en échec", "dash_agents": "Agents",
+        "dash_agents_v": "{n} (en cours {run}, en attente {wait})", "dash_relay": "Dernier relais", "dash_never": "rien pour l'instant",
     },
 }

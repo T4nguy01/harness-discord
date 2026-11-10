@@ -7,7 +7,7 @@ import logging
 import random
 import time
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 import websockets
@@ -131,11 +131,21 @@ class Rest:
             pass
 
     async def react(self, channel: str, message: str, emoji: str) -> None:
-        from urllib.parse import quote
         try:
             await self.call("PUT", f"/channels/{channel}/messages/{message}/reactions/{quote(emoji)}/@me")
         except DiscordError:
             pass
+
+    async def unreact(self, channel: str, message: str, emoji: str) -> None:
+        """Remove the bot's own reaction (nothing happens when it is not there)."""
+        try:
+            await self.call("DELETE", f"/channels/{channel}/messages/{message}/reactions/{quote(emoji)}/@me")
+        except DiscordError:
+            pass
+
+    async def pin(self, channel: str, message: str) -> None:
+        """Pin a message (needs Manage Messages, or Pin Messages on recent servers). Raises DiscordError when refused."""
+        await self.call("PUT", f"/channels/{channel}/messages/pins/{message}")
 
     # --- channels and threads -------------------------------------------------------------------------------
 
@@ -204,6 +214,12 @@ class Rest:
         await self.call("POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback",
                         json={"type": kind, "data": data})
 
+    async def autocomplete(self, interaction: dict, choices: list[dict]) -> None:
+        """Answer an autocomplete interaction (type 4): at most 25 choices {name, value}, each <= 100 characters."""
+        out = [{"name": str(c["name"])[:100], "value": str(c["value"])[:100]} for c in choices[:25]]
+        await self.call("POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback",
+                        json={"type": 8, "data": {"choices": out}})
+
     async def followup(self, interaction: dict, app_id: str, content: str, ephemeral: bool = False) -> None:
         body: dict[str, Any] = {"content": content, "allowed_mentions": NO_MENTIONS}
         if ephemeral:
@@ -261,9 +277,29 @@ class Gateway:
         self._stop = False
         self.fatal = ""                              # set when Discord closes with a code retrying cannot fix
         self._tasks: set[asyncio.Task] = set()      # keep references: a task nobody holds can be collected early
+        self.presence: dict | None = None            # last status asked for (sent again when identifying)
+        self._ws: Any = None
 
     def stop(self) -> None:
         self._stop = True
+
+    @staticmethod
+    def presence_payload(text: str, status: str = "online") -> dict:
+        """Gateway op 3 payload: a custom status line (activity type 4)."""
+        return {"since": None, "status": status, "afk": False,
+                "activities": [{"name": "Custom Status", "type": 4, "state": text[:128]}]}
+
+    async def update_presence(self, text: str, status: str = "online") -> bool:
+        """Set the bot's status line (op 3). Kept for the next identify; True when sent on the live connection."""
+        self.presence = self.presence_payload(text, status)
+        ws = self._ws
+        if ws is None:
+            return False
+        try:
+            await ws.send(json.dumps({"op": 3, "d": self.presence}))
+        except websockets.ConnectionClosed:
+            return False
+        return True
 
     async def run(self) -> None:
         delay = 1.0
@@ -301,6 +337,7 @@ class Gateway:
             hello = json.loads(await ws.recv())
             acked = {"ok": True}
             hb = asyncio.create_task(self._heartbeat(ws, hello["d"]["heartbeat_interval"] / 1000, acked))
+            self._ws = ws
             try:
                 await self._identify(ws)
                 async for raw in ws:
@@ -308,6 +345,7 @@ class Gateway:
                         return
             finally:
                 hb.cancel()
+                self._ws = None
 
     async def _heartbeat(self, ws: Any, interval: float, acked: dict) -> None:
         await asyncio.sleep(interval * random.random())
@@ -323,9 +361,11 @@ class Gateway:
         if self.session_id and self.seq is not None:
             await ws.send(json.dumps({"op": 6, "d": {"token": self.token, "session_id": self.session_id, "seq": self.seq}}))
         else:
-            await ws.send(json.dumps({"op": 2, "d": {
-                "token": self.token, "intents": INTENTS,
-                "properties": {"os": "linux", "browser": "harness-discord", "device": "harness-discord"}}}))
+            d = {"token": self.token, "intents": INTENTS,
+                 "properties": {"os": "linux", "browser": "harness-discord", "device": "harness-discord"}}
+            if self.presence:
+                d["presence"] = self.presence
+            await ws.send(json.dumps({"op": 2, "d": d}))
 
     async def _on_frame(self, ws: Any, m: dict, acked: dict) -> bool:
         """One gateway frame. True when this connection must end (Discord asked for a reconnect)."""

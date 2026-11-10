@@ -50,6 +50,7 @@ class FakeGateway:
         self.server = None
         self.port = 0
         self.sessions = 0
+        self.presences: list[dict] = []     # op 3 payloads received
         self.close_codes: list = []        # close code of each connection, as the server saw it
 
     @property
@@ -112,7 +113,11 @@ class FakeGateway:
                         await ws.close(4013)
                         return
                     self.identifies.append(d)
+                    if d.get("presence"):
+                        self.presences.append(d["presence"])
                     await self._send_dispatch(ws, "READY", self._ready(), record=False)
+                elif op == 3:
+                    self.presences.append(m["d"])
                 elif op == 6:
                     d = m["d"]
                     self.resumes.append(d)
@@ -148,6 +153,11 @@ class FakeDiscord:
         self.deleted_channels: list[str] = []
         self.renamed: list[tuple[str, str]] = []
         self.reactions: list[tuple[str, str, str]] = []
+        self.unreactions: list[tuple[str, str, str]] = []
+        self.pins: list[tuple[str, str]] = []
+        self.modified: list[tuple[str, dict]] = []     # channel PATCH without a rename (archive / unarchive)
+        self.autocompletes: list[dict] = []
+        self.pin_status = 204
         self.commands: list = []
         self.typing = 0
         self.calls: list[tuple[str, str]] = []
@@ -199,13 +209,26 @@ class FakeDiscord:
             self.channels[t["id"]] = {"id": t["id"], "type": 11, "parent_id": r[1]}
             return httpx.Response(200, json={"id": t["id"]})
         if (r := re.fullmatch(r"/channels/(\w+)/messages/(\w+)/reactions/(.+)/@me", path)):
-            self.reactions.append((r[1], r[2], unquote(r[3])))
+            if m == "DELETE":
+                self.unreactions.append((r[1], r[2], unquote(r[3])))
+                if (r[1], r[2], unquote(r[3])) in self.reactions:
+                    self.reactions.remove((r[1], r[2], unquote(r[3])))
+            else:
+                self.reactions.append((r[1], r[2], unquote(r[3])))
+            return httpx.Response(204)
+        if (r := re.fullmatch(r"/channels/(\w+)/messages/pins/(\w+)", path)) and m == "PUT":
+            if self.pin_status >= 400:
+                return httpx.Response(self.pin_status, json={"code": 50013, "message": "Missing Permissions"})
+            self.pins.append((r[1], r[2]))
             return httpx.Response(204)
         if (r := re.fullmatch(r"/channels/(\w+)", path)):
             if m == "GET":
                 return httpx.Response(200, json=self.channels.get(r[1], {"id": r[1], "type": 0}))
             if m == "PATCH":
-                self.renamed.append((r[1], body["name"]))
+                if "name" in body:
+                    self.renamed.append((r[1], body["name"]))
+                else:
+                    self.modified.append((r[1], body))
                 return httpx.Response(200, json={"id": r[1]})
             if m == "DELETE":
                 self.deleted_channels.append(r[1])
@@ -215,6 +238,8 @@ class FakeDiscord:
             return httpx.Response(200, json=body)
         if (r := re.fullmatch(r"/interactions/([\w-]+)/([\w-]+)/callback", path)):
             self.responses.append({"id": r[1], "token": r[2], **body})
+            if body.get("type") == 8:
+                self.autocompletes.append(body["data"]["choices"])
             return httpx.Response(204)
         if (r := re.fullmatch(r"/webhooks/(\w+)/([\w-]+)/messages/@original", path)) and m == "PATCH":
             self.originals.append({"token": r[2], **body})
@@ -256,6 +281,9 @@ class FakeHarness:
         self.agents: list[dict] = []
         self.agent_msgs: dict[str, list[dict]] = {}
         self.agent_runs: list[tuple[str, dict]] = []
+        self.models = [{"id": "claude-opus-5-5", "label": "Opus 5.5"}, {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5"},
+                       {"id": "claude-haiku-4-5-20251001", "label": "Haiku 4.5"}]
+        self.crons: list[dict] = []
         self.files: dict[str, tuple[bytes, str]] = {}      # served at /cdn/<name> (Discord attachments)
         self.n = 0
         self.tasks: set[asyncio.Task] = set()
@@ -400,11 +428,17 @@ class FakeHarness:
             e = next((x for x in self.feed if x["id"] == eid), None)
             if not e:
                 return 404, {"error": "not_found"}
-            if not e.get("resolved"):
+            if action == "seen":                       # like Harness: "seen" only marks it read
+                e["read"] = True
+            elif not e.get("resolved"):
                 e["resolved"] = True
                 e["resolution"] = {"allow": "Allowed", "deny": "Denied"}.get(action, "Seen")
                 e["actions"] = []
             return 200, {"event": e}
+        if path == "/api/claude/status":
+            return 200, {"models": self.models}
+        if path == "/api/crons":
+            return 200, {"jobs": self.crons, "external": []}
         if path == "/api/agents":
             return 200, {"agents": self.agents}
         if (r := re.fullmatch(r"/api/agents/(\w+)/(\w+)/(\w+)/thread", path)):
