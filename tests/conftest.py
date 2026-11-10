@@ -30,3 +30,9 @@ def night(monkeypatch):
     from harness_discord import notifier
     at = datetime.datetime(2026, 11, 10, 3, 0).timestamp()
     monkeypatch.setattr(notifier, "now", lambda: at)
+
+
+@pytest.fixture(autouse=True)
+def isolated_state_dir(tmp_path, monkeypatch):
+    """No test may touch the real state folder of the running bridge (status.json, audit.jsonl...)."""
+    monkeypatch.setenv("HD_STATE_DIR", str(tmp_path / "hd-state"))
