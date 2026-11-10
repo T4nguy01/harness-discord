@@ -42,6 +42,14 @@ thread per session.
 - **Proactive messages** (`proactive`, on by default): at 08:00 server time (until noon) a silent summary of late and due tasks in
   `notifications`, once a day; a warning in `alerts` when the plan passes 80 % of its 5 hour window (once per window); an alert in
   `alerts` when the memory backup fails (once per failure; a failure already there at start-up is not announced).
+- **Tool-call approvals** (`tool_approvals`, on by default): when Claude or an agent waits for your OK on a tool call, the bridge posts an
+  orange card in the session thread (the `alerts` channel when the session has no thread): tool, an excerpt of the request in a code
+  block (obvious secrets such as `token=...` or `Bearer ...` are masked), and the buttons **Allow**, **Deny**, **Always allow** (two
+  steps: a private confirmation shows the permanent rule it creates) and **Deny with a reason** (a form; Claude reads the reason).
+  It is the same queue as the web UI and Telegram: the first answer wins. The card turns green or red (who decided) or grey (decided
+  elsewhere, timed out, session stopped) and loses its buttons; a late click gets a private "already answered or expired". A request
+  too long to be shown whole can only be denied. While one waits, the live status line says "waiting for your approval". The audit
+  trail records tool, id and decision, never the request. The feed no longer posts its own copy of the same request.
 - **Open in Harness**: a link button (the plain address of Harness, no token) under the dashboard and under agent results.
 - **Threads**: `/close` archives **and locks** the thread (it is no longer deleted); session threads auto-archive after 7 days;
   `alerts` gets a 2 second slow mode (once, when the bridge can set it).
@@ -73,7 +81,7 @@ thread per session.
 
 Not possible from outside the server: the two-step sign-in approval (it needs the product's internals).
 
-**Opt-in.** The relays and the extras are settings on the Discord page (`mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard` and `proactive` are on by default): `relay_feed` (alerts, approvals, job reports), `relay_agents`
+**Opt-in.** The relays and the extras are settings on the Discord page (`mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard`, `proactive` and `tool_approvals` are on by default): `relay_feed` (alerts, approvals, job reports), `relay_agents`
 (agent results) and `relay_bell` (bell in session threads) can each be switched off there, as can the web mirror, the reactions, the answer buttons and the dashboard. The **Send a test message** button
 and the relays (and the proactive messages, switch `proactive` off to stop them) are the only things that post on their own: with them off, and as long as you write nothing, nothing is sent
 to Discord. The bridge only ever answers the owner id you set.

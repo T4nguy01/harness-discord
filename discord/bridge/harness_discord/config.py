@@ -51,9 +51,10 @@ DEFAULTS = {
     "answer_buttons": True,  # Stop / Regenerate buttons under the final answer of a turn
     "dashboard": True,       # a pinned dashboard message in the alerts channel
     "proactive": True,       # morning task summary, plan above 80 %, failed backup
+    "tool_approvals": True,  # post pending tool-call approvals with Allow / Deny / Always buttons (same queue as the web UI and Telegram)
     "workspace_dir": "",     # workspace root for /harness files (empty = $HD_WORKSPACE or /root/maxxing)
 }
-BOOLS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive")
+BOOLS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive", "tool_approvals")
 
 
 def load_settings() -> dict:

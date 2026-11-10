@@ -634,6 +634,8 @@ class ToolsMixin:
         cid = i["data"].get("custom_id")
         if cid == "ta":
             return await self.submit_task_add(i)
+        if str(cid).startswith("apm:"):
+            return await self.relay.approvals.on_modal(i)
         if cid == CTX_NEW_FORM:
             ch, in_dm = i["channel_id"], not i.get("guild_id")
             if not self.allowed_here(ch, in_dm):

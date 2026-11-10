@@ -238,6 +238,8 @@ class FollowMixin:
         if self.cfg.get("reply_mode") != "live":
             return
         now = time.time()
+        if self.relay.approvals.waiting(f.sid):
+            line = "🔐 " + self.t("ap_waiting")
         body = f"⏳ {self.t('working')} ({self.t('steps', n=f.steps)})\n{line}"
         try:
             if not f.status_id:

@@ -9,7 +9,7 @@ from pathlib import Path
 
 SERVICE = "harness-discord"
 MODES = ("live", "final")
-FLAGS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive")
+FLAGS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive", "tool_approvals")
 
 
 def _read(path, default):

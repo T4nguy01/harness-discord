@@ -76,6 +76,16 @@ TD = {
         "mo_title": "Good morning", "mo_late": "Late ({n})", "mo_today": "Due today ({n})",
         "pl_title": "Plan at {pct} % (5 hour window)", "pl_body": "Slow down to avoid hitting the limit.", "pl_resets": "Resets",
         "bf_title": "The memory backup failed", "bf_body": "See Harness, Settings, Backup.",
+        # tool-call approvals
+        "ap_title": "Approval needed: {tool}", "ap_allow": "Allow", "ap_deny": "Deny", "ap_always": "Always allow", "ap_reason": "Deny with a reason",
+        "ap_f_session": "Session", "ap_f_expires": "Expires", "ap_f_rule": "Rule", "ap_cut": "Only part of the request is shown: it can only be denied here, open it in Harness to read it all.",
+        "ap_clipped": "This request is too long to be shown whole: it can only be denied.",
+        "ap_allowed": "Allowed by {who}", "ap_always_done": "Always allowed by {who}", "ap_denied": "Denied by {who}",
+        "ap_gone": "Decided elsewhere (web, Telegram...) or expired", "ap_reason_f": "Reason",
+        "ap_confirm_always": "This creates a **permanent** rule for the whole topic: `{rule}`. Confirm?", "ap_confirm_btn": "Yes, always allow",
+        "ap_modal": "Deny with a reason", "ap_modal_f": "Reason (the agent reads it)", "ap_modal_ph": "Why is this refused?",
+        "ap_stale": "This request was already answered or has expired.", "ap_no_rule": "This request cannot be allowed for good: allow it once.",
+        "ap_waiting": "waiting for your approval",
     },
     "fr": {
         "d_newform": "Ouvre un formulaire : titre, topic et premier message",
@@ -138,5 +148,15 @@ TD = {
         "mo_title": "Bonjour", "mo_late": "En retard ({n})", "mo_today": "À faire aujourd'hui ({n})",
         "pl_title": "Forfait à {pct} % (fenêtre de 5 h)", "pl_body": "Ralentis pour ne pas atteindre la limite.", "pl_resets": "Remise à zéro",
         "bf_title": "La sauvegarde de la mémoire a échoué", "bf_body": "Voir Harness, Réglages, Sauvegarde.",
+        # approbations d'outils
+        "ap_title": "Approbation requise : {tool}", "ap_allow": "Autoriser", "ap_deny": "Refuser", "ap_always": "Toujours autoriser", "ap_reason": "Refuser avec un motif",
+        "ap_f_session": "Session", "ap_f_expires": "Expire", "ap_f_rule": "Règle", "ap_cut": "Seule une partie de la demande est affichée : elle ne peut qu'être refusée ici, ouvrez-la dans Harness pour tout lire.",
+        "ap_clipped": "Cette demande est trop longue pour être affichée en entier : elle ne peut qu'être refusée.",
+        "ap_allowed": "Autorisé par {who}", "ap_always_done": "Toujours autorisé par {who}", "ap_denied": "Refusé par {who}",
+        "ap_gone": "Décidée ailleurs (web, Telegram...) ou expirée", "ap_reason_f": "Motif",
+        "ap_confirm_always": "Cela crée une règle **permanente** pour tout le sujet : `{rule}`. Confirmer ?", "ap_confirm_btn": "Oui, toujours autoriser",
+        "ap_modal": "Refuser avec un motif", "ap_modal_f": "Motif (lu par l'agent)", "ap_modal_ph": "Pourquoi est-ce refusé ?",
+        "ap_stale": "Cette demande a déjà reçu une réponse ou a expiré.", "ap_no_rule": "Cette demande ne peut pas être autorisée définitivement : autorisez-la une fois.",
+        "ap_waiting": "en attente d'approbation",
     },
 }

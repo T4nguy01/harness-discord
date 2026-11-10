@@ -51,6 +51,7 @@ class Bot(CommandsMixin, FollowMixin):
         self.sync_task: asyncio.Task | None = None
         self.relay = Relay(self)
         self.relay_task: asyncio.Task | None = None
+        self.approvals_task: asyncio.Task | None = None
         self.mirror = Mirror(self)
         self.emojis: dict[str, str] = {}                            # project -> emoji (thread names)
         self.forwarded: OrderedDict[str, str] = OrderedDict()       # Discord message id -> channel, for messages sent to Claude
@@ -83,6 +84,8 @@ class Bot(CommandsMixin, FollowMixin):
             self.sync_task = asyncio.create_task(self._sync_loop())
         if not self.relay_task:
             self.relay_task = asyncio.create_task(self.relay.run())
+        if not self.approvals_task:
+            self.approvals_task = asyncio.create_task(self.relay.approvals.run())
         log.info("ready: commands registered, owner %s, %d project channels", self.owner, len(self.lay.get("projects", {})))
 
     async def register_commands(self) -> None:
@@ -405,6 +408,8 @@ class Bot(CommandsMixin, FollowMixin):
 
     async def on_component(self, i: dict) -> None:
         kind, _, pid = i["data"]["custom_id"].partition(":")
+        if kind == "ap":                                       # a tool-call approval: Allow / Deny / Always / reason
+            return await self.relay.approvals.on_component(i)
         if await self.on_tool_component(i, kind):
             return
         p = self.pending.get(pid)

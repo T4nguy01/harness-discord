@@ -16,6 +16,7 @@ from . import __version__, config
 from . import fmt
 from .bell import Bell
 from .dashboard import Dashboard, web_link
+from .approvals import RID, Approvals
 from .notifier import Notifier
 from .discord_api import DiscordError
 from .harness import HarnessError
@@ -87,6 +88,7 @@ class Relay:
         self.bell = Bell(bot)
         self.dashboard = Dashboard(bot, self)
         self.notifier = Notifier(bot)
+        self.approvals = Approvals(bot)
         self._sessions: tuple[float, list] = (0.0, [])
         self.presence_at = 0.0
         self.presence_n: int | None = None
@@ -204,7 +206,7 @@ class Relay:
         for e in sorted((x for x in events if x["id"] > st["feed_last"]), key=lambda x: x["id"]):
             try:
                 ch = self.channel_for(e)
-                if ch and not e.get("resolved"):
+                if ch and not e.get("resolved") and not self.is_approval(e):
                     embed, comps = render(e, self.bot.web_url)
                     m = await self.bot.rest.send(ch, "", embeds=[embed], components=comps or None,
                                                  silent=e.get("level") in QUIET)
@@ -243,6 +245,11 @@ class Relay:
         for k in sorted(st["posted"], key=int)[:-150]:
             del st["posted"][k]
         self.bot.store.save()
+
+    def is_approval(self, e: dict) -> bool:
+        """A tool-call approval already posted by the approvals poller (with its own buttons): not a second time from the feed."""
+        ref = str(e.get("ref") or "")
+        return ref.startswith("approval:") and bool(RID.fullmatch(ref[9:])) and bool(self.bot.cfg.get("tool_approvals", True))
 
     async def act(self, eid: int, action: str) -> dict:
         if not SAFE_ID.fullmatch(action):

@@ -9,8 +9,8 @@ The bridge is a service (`harness-discord`) that signs in to Harness like the ow
 (settings, status) in `<workspace>/extensions/discord/`. Secrets live only in Settings -> Keys:
 `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (never print them, never write them in a file or a message).
 Settings (not secret): `<state>/extensions/discord/config.json` (`owner_id`, `guild_id`, `reply_mode`, `relay_feed`,
-`relay_agents`, `relay_bell`, `mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard`, `proactive`; all booleans, on by default; also `workspace_dir`, the folder `/harness files` may read, default `/root/maxxing`); status: `status.json` next to it. The Discord page edits them. The bridge re-reads the file every 10 s, but a setting takes effect when it is used:
-`owner_id`, `reply_mode`, `relay_feed`, `relay_bell`, `reactions`, `answer_buttons`, `dashboard`, `proactive`: within 10 s (`dashboard`: the message is refreshed within 10 minutes); `mirror_web_sessions`: at the next channel sync (Resync, or every 10 minutes); `relay_agents`: within 30 s (agents are polled every third
+`relay_agents`, `relay_bell`, `mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard`, `proactive`, `tool_approvals`; all booleans, on by default; also `workspace_dir`, the folder `/harness files` may read, default `/root/maxxing`); status: `status.json` next to it. The Discord page edits them. The bridge re-reads the file every 10 s, but a setting takes effect when it is used:
+`owner_id`, `reply_mode`, `relay_feed`, `relay_bell`, `reactions`, `answer_buttons`, `dashboard`, `proactive`, `tool_approvals`: within 10 s (`dashboard`: the message is refreshed within 10 minutes); `mirror_web_sessions`: at the next channel sync (Resync, or every 10 minutes); `relay_agents`: within 30 s (agents are polled every third
 pass); `guild_id`: at the next channel sync (Resync button: within 10 s, otherwise every 10 minutes); keys
 (`DISCORD_BOT_TOKEN`, `HARNESS_PASSWORD`): only after a restart of the service. The *Test message* and *Resync*
 buttons leave a flag file that the bridge picks up within 10 s.
@@ -43,6 +43,11 @@ buttons leave a flag file that the bridge picks up within 10 s.
   localized (French names) and registered only when their definition changed (hash in state.json: `commands_hash`).
 - Audit trail: `audit.jsonl` in the state folder (mode 600, rotated at about 1 MB; time, command, target, result; never message
   text). `/harness audit` shows the last 10. Read it to answer "who did that from Discord".
+- Tool-call approvals (`tool_approvals`): pending requests of `GET /api/approvals` are posted (polled every 3 s while a session is
+  followed, else 10 s) in the session thread, else `alerts`, with Allow / Deny / Always allow (2 steps) / Deny with a reason (form).
+  It is the same queue as the web UI and Telegram: the first decision wins, the card then shows how it ended (a late click gets a
+  private "already answered or expired"). Owner only. The audit trail keeps tool, id and decision, never the request. Feed events
+  with an `approval:<id>` ref are not posted again. Off = the feed alone relays them, as before.
 - Proactive messages (`proactive`): 08:00 task summary (silent, `notifications`, once a day), plan above 80 % and failed backup
   (`alerts`, once each). Switch off with `proactive: false`.
 - `/close` archives and locks the thread (no deletion); session threads auto-archive after 7 days; `alerts` has a 2 s slow mode;

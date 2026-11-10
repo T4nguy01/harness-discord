@@ -197,3 +197,13 @@ def test_proactive_setting_defaults_on_and_is_a_strict_boolean(api, tmp_path, mo
     assert r["config"]["proactive"] is False and json.loads((api.dir / "config.json").read_text())["proactive"] is False
     monkeypatch.setenv("HD_STATE_DIR", str(api.dir))
     assert config.load_settings()["proactive"] is False
+
+
+def test_tool_approvals_setting_defaults_on_and_is_a_strict_boolean(api):
+    assert "tool_approvals" in config.BOOLS and config.DEFAULTS["tool_approvals"] is True
+    assert api.handle(api.ctx, "GET", "status", {}, None)["config"]["tool_approvals"] is True
+    for bad in ("false", 0, None, []):
+        code, out = api.handle(api.ctx, "POST", "config", {}, {"tool_approvals": bad})
+        assert code == 400 and out["error"] == "bad_flag", bad
+    r = api.handle(api.ctx, "POST", "config", {}, {"tool_approvals": False})
+    assert r["config"]["tool_approvals"] is False

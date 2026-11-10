@@ -285,6 +285,8 @@ class FakeHarness:
         self.stream_froms: list[tuple[str, int]] = []
         self.cut_gen = 0
         self.feed: list[dict] = []
+        self.approvals: list[dict] = []       # requests as GET /api/approvals shows them (status pending / allow / deny / timeout)
+        self.approval_posts: list[tuple[str, dict]] = []
         self.acts: list[tuple[int, str]] = []
         self.agents: list[dict] = []
         self.agent_msgs: dict[str, list[dict]] = {}
@@ -471,6 +473,23 @@ class FakeHarness:
                 e["resolution"] = {"allow": "Allowed", "deny": "Denied"}.get(action, "Seen")
                 e["actions"] = []
             return 200, {"event": e}
+        if path == "/api/approvals" and method == "GET":
+            return 200, {"approvals": [a for a in self.approvals if a["status"] == "pending"
+                                       and (not q.get("session") or a["session"] == q["session"])]}
+        if (r := re.fullmatch(r"/api/approvals/(\w+)", path)) and method == "POST":
+            self.approval_posts.append((r[1], j))
+            a = next((x for x in self.approvals if x["id"] == r[1]), None)
+            if not a:
+                return 404, {"detail": {"error": "not_found", "message": "No such approval request"}}
+            if a["status"] != "pending":
+                return 409, {"detail": {"error": "not_pending", "message": f"This request is already {a['status']}"}}
+            if j.get("decision") == "allow" and a.get("clipped"):
+                return 409, {"detail": {"error": "clipped", "message": "too long"}}
+            if j.get("always") and not a.get("always_rule"):
+                return 400, {"detail": {"error": "no_rule", "message": "no rule"}}
+            a["status"] = j["decision"]
+            a["message"] = j.get("message", "")
+            return 200, a
         if path == "/api/claude/status":
             return 200, {"models": self.models}
         if path == "/api/crons":
