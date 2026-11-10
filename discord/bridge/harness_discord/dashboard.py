@@ -20,6 +20,14 @@ EVERY = 600
 HERR = (HarnessError, httpx.HTTPError)
 
 
+def web_link(bot: Any) -> list[dict] | None:
+    """A link button to the Harness web interface (its plain address: no token, no session in the URL)."""
+    url = str(getattr(bot, "web_url", "") or "")
+    if not url.startswith(("http://", "https://")):
+        return None
+    return [{"type": 1, "components": [{"type": 2, "style": 5, "label": "🌐 " + bot.t("open_harness"), "url": url}]}]
+
+
 class Dashboard:
     def __init__(self, bot: Any, relay: Any):
         self.bot, self.relay = bot, relay
@@ -73,12 +81,13 @@ class Dashboard:
             return
         st["at"] = now
         d = await self.data()
-        h = hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
+        h = hashlib.sha1(json.dumps([d, b.web_url], sort_keys=True).encode()).hexdigest()
         embed = self.embed(d)
+        link = web_link(b)
         if st.get("message") and st.get("channel") == ch:
             if st.get("hash") != h:
                 try:
-                    await b.rest.edit(ch, st["message"], content="", embeds=[embed])
+                    await b.rest.edit(ch, st["message"], content="", embeds=[embed], components=link or [])
                     st["hash"] = h
                 except DiscordError as e:
                     if not is_gone(e):
@@ -86,7 +95,7 @@ class Dashboard:
                     log.info("dashboard message is gone: a new one is posted")
                     st.pop("message", None)
         if not st.get("message") or st.get("channel") != ch:
-            sent = await b.rest.send(ch, "", embeds=[embed], silent=True)
+            sent = await b.rest.send(ch, "", embeds=[embed], silent=True, components=link)
             st.update({"message": sent["id"], "channel": ch, "hash": h, "pin": False})
         if not st.get("pin"):
             try:

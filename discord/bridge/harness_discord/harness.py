@@ -22,6 +22,14 @@ class HarnessError(Exception):
 
 
 SID = re.compile(r"[\w-]{1,64}", re.ASCII)
+SEG = re.compile(r"[\w.@-]{1,80}", re.ASCII)
+
+
+def seg(x: str) -> str:
+    """One path segment of the API (a task, job, mailbox... id): plain characters only."""
+    if not isinstance(x, str) or not SEG.fullmatch(x) or x in (".", ".."):
+        raise HarnessError(400, "bad_id")
+    return x
 
 
 def check_sid(sid: str) -> str:
@@ -145,6 +153,57 @@ class Harness:
     async def upload(self, path: str, name: str, data: bytes, mime: str = "application/octet-stream") -> str:
         d = await self.request("POST", "/api/uploads", params={"path": path}, files={"file": (os.path.basename(name) or "file", data, mime)})
         return d["files"][0]["path"]
+
+    # --- tasks, jobs, agents, usage, health, backup... (Discord tools) --------------------------------------------------
+
+    async def tasks(self) -> dict:
+        return await self.request("GET", "/api/tasks")
+
+    async def create_task(self, body: dict) -> dict:
+        return await self.request("POST", "/api/tasks", json=body)
+
+    async def set_task_status(self, tid: str, status: str) -> dict:
+        return await self.request("PATCH", f"/api/tasks/{seg(tid)}", json={"status": status})
+
+    async def crons(self) -> list[dict]:
+        return (await self.request("GET", "/api/crons")).get("jobs", [])
+
+    async def run_cron(self, cid: str) -> None:
+        await self.request("POST", f"/api/crons/{seg(cid)}/run")
+
+    async def enable_cron(self, cid: str, enabled: bool) -> dict:
+        return await self.request("PATCH", f"/api/crons/{seg(cid)}", json={"enabled": bool(enabled)})
+
+    async def agents(self) -> list[dict]:
+        return (await self.request("GET", "/api/agents")).get("agents", [])
+
+    async def run_agent_path(self, project: str, topic: str, name: str, text: str = "") -> dict:
+        return await self.request("POST", f"/api/agents/{seg(project)}/{seg(topic)}/{seg(name)}/run", json={"text": text} if text else {})
+
+    async def clear_queue(self, sid: str) -> None:
+        await self.request("DELETE", f"/api/sessions/{check_sid(sid)}/queue")
+
+    async def fetch(self, path: str, params: dict | None = None, limit: int = 25 * 1024 * 1024) -> bytes:
+        """GET a binary answer (a file), stopping at `limit` bytes (413 beyond)."""
+        for attempt in (1, 2):
+            if not self._signed:
+                await self.login()
+            try:
+                async with self.http.stream("GET", path, params=params) as r:
+                    if r.status_code == 401 and attempt == 1:
+                        self._signed = False
+                        continue
+                    if r.status_code >= 400:
+                        raise HarnessError(r.status_code, "http_error")
+                    buf = bytearray()
+                    async for chunk in r.aiter_bytes():
+                        buf += chunk
+                        if len(buf) > limit:
+                            raise HarnessError(413, "too_large")
+                    return bytes(buf)
+            except httpx.HTTPError as e:
+                raise HarnessError(0, "unreachable", type(e).__name__) from e
+        raise HarnessError(401, "auth_required")
 
     async def tail(self, sid: str) -> int:
         """Offset of the end of the session log (where to start following)."""

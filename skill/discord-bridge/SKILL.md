@@ -9,8 +9,8 @@ The bridge is a service (`harness-discord`) that signs in to Harness like the ow
 (settings, status) in `<workspace>/extensions/discord/`. Secrets live only in Settings -> Keys:
 `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (never print them, never write them in a file or a message).
 Settings (not secret): `<state>/extensions/discord/config.json` (`owner_id`, `guild_id`, `reply_mode`, `relay_feed`,
-`relay_agents`, `relay_bell`, `mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard`; all booleans, on by default); status: `status.json` next to it. The Discord page edits them. The bridge re-reads the file every 10 s, but a setting takes effect when it is used:
-`owner_id`, `reply_mode`, `relay_feed`, `relay_bell`, `reactions`, `answer_buttons`, `dashboard`: within 10 s (`dashboard`: the message is refreshed within 10 minutes); `mirror_web_sessions`: at the next channel sync (Resync, or every 10 minutes); `relay_agents`: within 30 s (agents are polled every third
+`relay_agents`, `relay_bell`, `mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard`, `proactive`; all booleans, on by default; also `workspace_dir`, the folder `/harness files` may read, default `/root/maxxing`); status: `status.json` next to it. The Discord page edits them. The bridge re-reads the file every 10 s, but a setting takes effect when it is used:
+`owner_id`, `reply_mode`, `relay_feed`, `relay_bell`, `reactions`, `answer_buttons`, `dashboard`, `proactive`: within 10 s (`dashboard`: the message is refreshed within 10 minutes); `mirror_web_sessions`: at the next channel sync (Resync, or every 10 minutes); `relay_agents`: within 30 s (agents are polled every third
 pass); `guild_id`: at the next channel sync (Resync button: within 10 s, otherwise every 10 minutes); keys
 (`DISCORD_BOT_TOKEN`, `HARNESS_PASSWORD`): only after a restart of the service. The *Test message* and *Resync*
 buttons leave a flag file that the bridge picks up within 10 s.
@@ -35,6 +35,18 @@ buttons leave a flag file that the bridge picks up within 10 s.
 - Buttons under the final answer (`answer_buttons`): Regenerate, and Stop when a turn waits behind. Gone at the next turn.
 - Commands with autocomplete: `/model` (free names like `opus`, `Sonnet 5.5`) and `/new [title] [topic]`; message menus
   "Send to Claude" and "New session from message"; forwarded messages are sent marked `[Forwarded]`.
+- `/harness` tools (owner only, private answers): `tasks` (Done / In progress buttons), `task add` (form), `cron list|run|toggle`,
+  `agent run`, `usage`, `health` (Mark seen), `search` (menu opening the session thread), `backup status|run`, `infra` (read only,
+  Refresh), `queue` (Clear), `files ls|get` (workspace only, 25 MB, never secret files or folders), `mail unread|outbox`,
+  `audit`. What runs or changes something asks for Confirm / Cancel buttons first (2 minutes, one use). Never offered: keys,
+  restoring a backup, deletions, updates, restarting a service, direct mail sending. `/new form:true` opens a form. Commands are
+  localized (French names) and registered only when their definition changed (hash in state.json: `commands_hash`).
+- Audit trail: `audit.jsonl` in the state folder (mode 600, rotated at about 1 MB; time, command, target, result; never message
+  text). `/harness audit` shows the last 10. Read it to answer "who did that from Discord".
+- Proactive messages (`proactive`): 08:00 task summary (silent, `notifications`, once a day), plan above 80 % and failed backup
+  (`alerts`, once each). Switch off with `proactive: false`.
+- `/close` archives and locks the thread (no deletion); session threads auto-archive after 7 days; `alerts` has a 2 s slow mode;
+  the dashboard and agent results carry an "Open in Harness" link button.
 - Presence ("N sessions running" / "idle") and a pinned dashboard in `alerts` (`dashboard`; the pin needs Manage Messages,
   without it the dashboard is posted unpinned: look for "dashboard not pinned" in the journal).
 
@@ -46,5 +58,5 @@ buttons leave a flag file that the bridge picks up within 10 s.
 - After changing a key: `systemctl restart harness-discord` (say so first).
 
 ## Rules
-Ask before deleting channels or messages on the user's server, or restarting the service. Never publish the
+Ask before deleting channels or messages on the user's server, or restarting the service. Do not add Discord commands that handle keys, restore, delete, update or restart. Never publish the
 project (GitHub, community library) without the user's explicit agreement.

@@ -50,8 +50,10 @@ DEFAULTS = {
     "reactions": True,       # status reactions on your message: hourglass while Claude works, then check mark / cross
     "answer_buttons": True,  # Stop / Regenerate buttons under the final answer of a turn
     "dashboard": True,       # a pinned dashboard message in the alerts channel
+    "proactive": True,       # morning task summary, plan above 80 %, failed backup
+    "workspace_dir": "",     # workspace root for /harness files (empty = $HD_WORKSPACE or /root/maxxing)
 }
-BOOLS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard")
+BOOLS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive")
 
 
 def load_settings() -> dict:

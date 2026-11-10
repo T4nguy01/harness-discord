@@ -21,3 +21,12 @@ def local_cdn(request, monkeypatch):
     if "allowlist" not in request.node.name:
         from harness_discord.discord_api import Rest
         monkeypatch.setattr(Rest, "CDN_ONLY", False)
+
+
+@pytest.fixture(autouse=True)
+def night(monkeypatch):
+    """The morning summary depends on the time of day: tests run at 03:00 unless they set their own clock."""
+    import datetime
+    from harness_discord import notifier
+    at = datetime.datetime(2026, 11, 10, 3, 0).timestamp()
+    monkeypatch.setattr(notifier, "now", lambda: at)

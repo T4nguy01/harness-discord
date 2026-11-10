@@ -15,7 +15,8 @@ from . import __version__, config
 
 from . import fmt
 from .bell import Bell
-from .dashboard import Dashboard
+from .dashboard import Dashboard, web_link
+from .notifier import Notifier
 from .discord_api import DiscordError
 from .harness import HarnessError
 
@@ -85,6 +86,7 @@ class Relay:
         self.tries: dict[int, int] = {}
         self.bell = Bell(bot)
         self.dashboard = Dashboard(bot, self)
+        self.notifier = Notifier(bot)
         self._sessions: tuple[float, list] = (0.0, [])
         self.presence_at = 0.0
         self.presence_n: int | None = None
@@ -116,7 +118,7 @@ class Relay:
                 await self.agents()
 
         for name, part in (("feed", feed), ("bell", bell), ("agents", agents), ("presence", self.presence),
-                           ("dashboard", self.dashboard.tick)):
+                           ("dashboard", self.dashboard.tick), ("notifier", self.notifier.tick)):
             try:
                 await part()
             except (HarnessError, DiscordError) as e:
@@ -296,7 +298,8 @@ class Relay:
                 embed: dict = {"description": part, "color": COLOR["success"] if ok else COLOR["error"]}
                 if n == len(parts) - 1 and m.get("cost"):
                     embed["footer"] = {"text": f"{m['cost']:.2f} $"}
-                sent = await self.bot.rest.send(info["thread"], "", embeds=[embed], silent=False)
+                link = web_link(self.bot) if n == len(parts) - 1 else None            # "Open in Harness" under the last part
+                sent = await self.bot.rest.send(info["thread"], "", embeds=[embed], silent=False, components=link)
                 self.bot.remember(sent["id"], "agent:" + path)
                 self.st["last_post"] = time.time()
             info["seen"] = m["at"]

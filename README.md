@@ -14,9 +14,37 @@ thread per session.
   when the turn ends; the answer arrives as a new message. Long answers are split in several messages, tables become lists.
 - **Files and voice**: attachments are saved in the topic (`attachments/`) and passed to Claude; Discord voice messages
   are transcribed by Harness.
-- **Commands**: `/new [title] [topic]`, `/sessions`, `/stop`, `/close`, `/model [name]`, `/status`, `/help` (French or English,
+- **Commands**: `/new [title] [topic] [form]`, `/sessions`, `/stop`, `/close`, `/model [name]`, `/status`, `/help` (French or English,
   following the Harness language). `/model` and the `topic` of `/new` have **autocomplete** (up to 25 choices, filtered as you
   type); `/model` also takes a free name like `opus` or `Sonnet 5.5` (same resolution as Telegram), otherwise it lists the choices.
+- **Forms**: `/new form:true` opens a form (title, topic typed or left empty for the menu, first message); `/harness task add`
+  opens one too (title, notes, due date, priority). Only the owner's submissions count.
+- **Tools, `/harness ...`** (owner only, the answers are private and nothing is posted in the channel):
+  `tasks [status]` (with **Done / In progress** buttons under each task), `task add`, `cron list|run|toggle`, `agent run`,
+  `usage` (5 h and 7 day windows as text bars, spending), `health` (issues with a **Mark seen** button, services, version),
+  `search <words>` (a menu that opens or creates the session's thread), `backup status|run`, `infra` (read only, **Refresh** button),
+  `queue` (messages waiting in this session, **Clear**), `files ls|get` (see below), `mail unread|outbox`, `audit`.
+  French Discords see them translated (`/harness tâches`, `/nouvelle`...): the command names and descriptions are localized.
+  Everything that **runs or changes** something (`cron run|toggle`, `agent run`, `backup run`, clearing a queue, marking mail read
+  or archiving it, sending or refusing a mail an agent wrote) first shows what it will do with **Confirm / Cancel** buttons
+  (short random ids, valid for 2 minutes, one use). One-click buttons that are the confirmation themselves: task status,
+  mark a health issue seen, refresh infra. Mail: unread counts and subjects per mailbox, reading does not mark a message read;
+  an agent's waiting mail is sent only after you confirm, with its recipient and subject in the question. There is no way to send a
+  mail directly.
+- **Files** (`/harness files ls|get`): the workspace folder only (default `/root/maxxing`, `workspace_dir` in `config.json` or
+  `HD_WORKSPACE`), 25 MB at most, sent as a private attachment. Never listed or sent: `.env*`, keys and certificates (`*.pem`,
+  `*.key`...), `id_rsa`-like files, anything with `secret`, `token`, `password` or `credential` in its name, and the folders `.git`,
+  `.ssh`, `.gnupg`, `.aws`, `.config`, `.claude`... A symbolic link leading outside the workspace is refused.
+- **Never offered from Discord**: keys and secrets, restoring a backup, deleting anything, updating Harness, restarting a service.
+- **Audit** (`/harness audit`, private, last 10): every action run from Discord (new session, stop, close, model, task, job, agent,
+  backup, queue, mail, health, infra, file sent) is written to `audit.jsonl` in the state folder (mode 600, rotated at about 1 MB):
+  time, command, target (an id or a path), result. Never the text of a message, never a secret.
+- **Proactive messages** (`proactive`, on by default): at 08:00 server time (until noon) a silent summary of late and due tasks in
+  `notifications`, once a day; a warning in `alerts` when the plan passes 80 % of its 5 hour window (once per window); an alert in
+  `alerts` when the memory backup fails (once per failure; a failure already there at start-up is not announced).
+- **Open in Harness**: a link button (the plain address of Harness, no token) under the dashboard and under agent results.
+- **Threads**: `/close` archives **and locks** the thread (it is no longer deleted); session threads auto-archive after 7 days;
+  `alerts` gets a 2 second slow mode (once, when the bridge can set it).
 - **Message menus** (right-click a message -> Apps): **Send to Claude** (the text and files of that message go to the
   current session, or you pick the topic in a project channel) and **New session from message**. Owner only, answers are private.
 - **Forwarded and quoted messages**: a reply passes the quoted text; a message forwarded with Discord's Forward is sent
@@ -45,9 +73,9 @@ thread per session.
 
 Not possible from outside the server: the two-step sign-in approval (it needs the product's internals).
 
-**Opt-in.** The relays and the extras are settings on the Discord page (`mirror_web_sessions`, `reactions`, `answer_buttons` and `dashboard` are on by default): `relay_feed` (alerts, approvals, job reports), `relay_agents`
+**Opt-in.** The relays and the extras are settings on the Discord page (`mirror_web_sessions`, `reactions`, `answer_buttons`, `dashboard` and `proactive` are on by default): `relay_feed` (alerts, approvals, job reports), `relay_agents`
 (agent results) and `relay_bell` (bell in session threads) can each be switched off there, as can the web mirror, the reactions, the answer buttons and the dashboard. The **Send a test message** button
-and the relays are the only things that post on their own: with them off, and as long as you write nothing, nothing is sent
+and the relays (and the proactive messages, switch `proactive` off to stop them) are the only things that post on their own: with them off, and as long as you write nothing, nothing is sent
 to Discord. The bridge only ever answers the owner id you set.
 
 ## What the `discord/` folder contains
@@ -97,7 +125,7 @@ link `<workspace>/.claude/skills/discord-bridge` and the two keys in Settings ->
 
 ## Limits and security
 
-- The bridge creates, moves and deletes **its own** categories and channels (Harness, Projects) on the server you give it, and can archive session threads. Use a **personal server** you own; only the owner id set in the page can talk to it.
+- The bridge creates and moves **its own** categories and channels (Harness, Projects) on the server you give it, and can archive and lock session threads. Use a **personal server** you own; only the owner id set in the page can talk to it.
 - It signs in to the Harness API as you with `HARNESS_PASSWORD`, so it has owner rights: **2FA must stay off**, and anyone who controls the Discord owner account or the bot token controls your sessions.
 - `install.sh` must run as root: it writes `/etc/systemd/system/harness-discord.service` (hardened unit) and runs `systemctl`. The page's "Restart the bridge" button asks for confirmation.
 - `reply_mode`: `live` (the answer is edited as it streams) or `final` (one message at the end).

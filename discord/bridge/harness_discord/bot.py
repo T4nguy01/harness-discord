@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import secrets
@@ -19,6 +21,7 @@ from .follow import (FOLLOW_GIVE_UP, FOLLOW_MAX_FAILS, FOLLOW_RESUME_MAX, FOLLOW
 from .harness import Harness, HarnessError
 from .mirror import Mirror
 from .relay import DONE_COLOR, Relay, render
+from .audit import Audit
 from .store import Store
 from .texts import T
 
@@ -40,6 +43,8 @@ class Bot(CommandsMixin, FollowMixin):
         self.follow_end: dict[str, float] = {}                      # session -> when its last Discord turn ended (bell)
         self.msg_session: OrderedDict[str, str] = OrderedDict()     # bot message id -> session (DM replies)
         self.owner = settings["owner_id"]
+        self.confirms: dict = {}                                    # token -> Confirm: actions waiting for a button click
+        self.audit = Audit(store.path.parent / "audit.jsonl")
         self.dm_channel = store.data.get("dm_channel", "")
         self.lay: dict = store.data.setdefault("layout", {})
         self.locks: dict[str, asyncio.Lock] = {}                    # one per session: messages go to Harness in order
@@ -71,7 +76,7 @@ class Bot(CommandsMixin, FollowMixin):
     # --- startup -------------------------------------------------------------------------------------------
 
     async def on_ready(self) -> None:
-        await self.rest.register_commands(self.gw.app_id, await self.commands())
+        await self.register_commands()
         await self.sync_layout()
         self.resume_followers()
         if not self.sync_task:
@@ -79,6 +84,16 @@ class Bot(CommandsMixin, FollowMixin):
         if not self.relay_task:
             self.relay_task = asyncio.create_task(self.relay.run())
         log.info("ready: commands registered, owner %s, %d project channels", self.owner, len(self.lay.get("projects", {})))
+
+    async def register_commands(self) -> None:
+        """Register the slash commands, only when their definition changed (Discord limits command creations per day)."""
+        cmds = await self.commands()
+        digest = hashlib.sha256(json.dumps(cmds, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if self.store.data.get("commands_hash") == digest:
+            return
+        await self.rest.register_commands(self.gw.app_id, cmds)
+        self.store.data["commands_hash"] = digest
+        self.store.save()
 
     async def _sync_loop(self) -> None:
         while True:
@@ -98,6 +113,7 @@ class Bot(CommandsMixin, FollowMixin):
         await layout.ensure(self.rest, self.lay, guild, self.owner, self.gw.user_id, projects, self.lang,
                             state_lost=self.store.damaged)
         self.store.damaged = False
+        await layout.slow_alerts(self.rest, self.lay)
         self.store.save()
         await self.mirror.sync()
 
@@ -173,6 +189,7 @@ class Bot(CommandsMixin, FollowMixin):
         if agent:
             try:
                 await self.relay.run_agent(agent, (m.get("content") or "").strip())
+                self.done("agent.run", agent.replace("projects/", "", 1).replace("/topics/", "/").replace("/agents/", "/"))
                 await self.rest.react(ch, m["id"], "✅")
             except HERR as e:
                 await self.rest.send(ch, self.err(e))
@@ -262,6 +279,7 @@ class Bot(CommandsMixin, FollowMixin):
             await self.react_state(mark, "⏳", "❌")
             await self.rest.send(p.channel, self.err(e))
             return False
+        self.done("session.new", path)
         self.note_forwarded(p.message, p.channel)
         if p.text:
             self.last_user[s["id"]] = p.text
@@ -382,9 +400,13 @@ class Bot(CommandsMixin, FollowMixin):
             return await self.on_component(i)
         if i["type"] == 2:
             return await self.on_command(i)
+        if i["type"] == 5:                                     # a form (modal) was submitted
+            return await self.on_modal(i)
 
     async def on_component(self, i: dict) -> None:
         kind, _, pid = i["data"]["custom_id"].partition(":")
+        if await self.on_tool_component(i, kind):
+            return
         p = self.pending.get(pid)
         app = self.gw.app_id
         if kind in ("pick", "cont") and not p:

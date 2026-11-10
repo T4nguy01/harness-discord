@@ -180,7 +180,15 @@ class FakeDiscord:
         if self.fail_next:
             st, body = self.fail_next.pop(0)
             return httpx.Response(st, json=body)
-        body = json.loads(req.content) if req.content else {}
+        ctype = req.headers.get("content-type", "")
+        if ctype.startswith("multipart/"):                       # a follow-up with a file: payload_json + files[0]
+            raw = req.content
+            pj = re.search(rb'name="payload_json"\r\n\r\n(.*?)\r\n--', raw, re.S)
+            body = json.loads(pj[1]) if pj else {}
+            fm = re.search(rb'name="files\[0\]"; filename="([^"]*)"\r\n(?:[^\r\n]+\r\n)*\r\n(.*)\r\n--[^\r\n]*--\r\n?$', raw, re.S)
+            body["_file"] = (fm[1].decode(), fm[2]) if fm else None
+        else:
+            body = json.loads(req.content) if req.content else {}
         m = req.method
         if (r := re.fullmatch(r"/channels/(\w+)/messages", path)) and m == "POST":
             msg = {"id": self.nid(), "channel": r[1], "content": body.get("content", ""), "orig": body.get("content", ""), "components": body.get("components"), "embeds": body.get("embeds"),
@@ -284,6 +292,31 @@ class FakeHarness:
         self.models = [{"id": "claude-opus-5-5", "label": "Opus 5.5"}, {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5"},
                        {"id": "claude-haiku-4-5-20251001", "label": "Haiku 4.5"}]
         self.crons: list[dict] = []
+        self.cron_runs: list[str] = []
+        self.task_data: dict = {"projects": [], "tasks": []}
+        self.task_patches: list[tuple[str, dict]] = []
+        self.task_posts: list[dict] = []
+        self.usage: dict = {"available": True, "five_hour": {"pct": 37.0, "resets_at": 1794297000}, "seven_day": {"pct": 64.0, "resets_at": 1794369600}, "plan": None}
+        self.stats: dict = {"totals": {"cost_usd": 45.9, "turns": 226, "sessions": 38, "total": 119977360}, "projects": [{"name": "dev", "cost_usd": 22.2}], "days": []}
+        self.health: dict = {"ok": True, "issues": [], "cpu_pct": 3.0, "mem": {"total": 4000, "avail": 3000}, "disk": {"total": 10, "free": 5, "pct": 30.8}, "uptime_s": 86400, "claude_auth": True, "backup_age_h": 3.6}
+        self.health_seen: list[dict] = []
+        self.search_results: list[dict] = []
+        self.backup_state: dict = {"configured": True, "repo": "me/mem", "private": True, "schedule": "40 4 * * *", "last": {"at": 1794282002.0, "ok": True, "commit": "f36f84bb28a7", "files": 95, "error": None}}
+        self.backup_history: list[dict] = [{"at": 1794282002.0, "ok": True, "commit": "f36f84bb28a7", "files": 95, "changed": True, "error": None}]
+        self.backup_runs = 0
+        self.infra: dict = {"enabled": True, "refreshing": False, "generated_at": 1794282002.0, "resources": [
+            {"id": "site:a", "kind": "site", "name": "shop.example.com", "location": "pi", "status": "ok", "status_detail": ""},
+            {"id": "db:a", "kind": "database", "name": "shop", "location": "pi", "status": "down", "status_detail": "unreachable"}]}
+        self.infra_refreshes = 0
+        self.queue_cleared: list[str] = []
+        self.fs: dict[str, dict] = {}                      # directory path -> {"entries": [...]}
+        self.fs_data: dict[str, bytes] = {}                # file path -> bytes
+        self.mail_accounts: list[dict] = []
+        self.mail_unread: dict[str, list[dict]] = {}
+        self.mail_actions: list[tuple[str, dict]] = []
+        self.outbox: list[dict] = []
+        self.outbox_acts: list[tuple[str, str]] = []
+        self.mail_off = False
         self.files: dict[str, tuple[bytes, str]] = {}      # served at /cdn/<name> (Discord attachments)
         self.n = 0
         self.tasks: set[asyncio.Task] = set()
@@ -369,6 +402,9 @@ class FakeHarness:
         self.log.append((method, target))
         if path.endswith("/stream"):
             return await self._stream(writer, path.split("/")[3], int(q.get("from", 0)), cookie[1])
+        if path == "/api/files/raw":
+            data = self.fs_data.get(q.get("path", ""))
+            return send(200, raw=data, ctype="application/octet-stream") if data is not None else send(404, {"error": "not_found"})
         code, obj = self.route(method, path, q, body, hdr)
         send(code, obj)
 
@@ -439,6 +475,84 @@ class FakeHarness:
             return 200, {"models": self.models}
         if path == "/api/crons":
             return 200, {"jobs": self.crons, "external": []}
+        if (r := re.fullmatch(r"/api/crons/([\w.@-]+)(/run)?", path)):
+            job = next((x for x in self.crons if x["id"] == r[1]), None)
+            if not job:
+                return 404, {"error": "not_found"}
+            if r[2]:
+                self.cron_runs.append(r[1])
+                return 200, {"ok": True}
+            if method == "PATCH":
+                job.update({k: v for k, v in j.items() if k == "enabled"})
+            return 200, job
+        if path == "/api/tasks" and method == "GET":
+            return 200, self.task_data
+        if path == "/api/tasks" and method == "POST":
+            self.task_posts.append(j)
+            task = {"id": "t_new123", "status": "todo", **j}
+            self.task_data["tasks"].append(task)
+            return 200, task
+        if (r := re.fullmatch(r"/api/tasks/([\w-]+)", path)) and method == "PATCH":
+            task = next((x for x in self.task_data["tasks"] if x["id"] == r[1]), None)
+            if not task:
+                return 404, {"error": "not_found", "message": "no task"}
+            self.task_patches.append((r[1], j))
+            task.update(j)
+            return 200, task
+        if path == "/api/usage":
+            return 200, self.usage
+        if path == "/api/stats/tokens":
+            return 200, self.stats
+        if path == "/api/system/health":
+            return 200, self.health
+        if path == "/api/system/health/seen":
+            self.health_seen.append(j)
+            for i in self.health["issues"]:
+                if i.get("id") == j.get("id"):
+                    i["seen"] = True
+            return 200, self.health
+        if path == "/api/system/services":
+            return 200, [{"name": "claude-maxxing", "label": "Harness Maxxing", "active": True, "state": "active"}]
+        if path == "/api/system/version":
+            return 200, {"version": "2.0.0a135", "behind": 3}
+        if path == "/api/search":
+            return 200, {"results": self.search_results, "took_ms": 1.0}
+        if path == "/api/backup":
+            return 200, self.backup_state
+        if path == "/api/backup/history":
+            return 200, self.backup_history
+        if path == "/api/backup/run":
+            self.backup_runs += 1
+            return 200, {"ok": True, "commit": "abcdef123456", "files": 96}
+        if path == "/api/infra":
+            return 200, self.infra
+        if path == "/api/infra/refresh":
+            self.infra_refreshes += 1
+            return 200, {"started": True, "refreshing": True}
+        if (r := re.fullmatch(r"/api/sessions/(\w+)/queue", path)) and method == "DELETE":
+            self.queue_cleared.append(r[1])
+            return 200, {"ok": True}
+        if path == "/api/files/list":
+            d = self.fs.get(q.get("path", ""))
+            return (200, {"path": q["path"], "entries": d}) if d is not None else (404, {"error": "not_found"})
+        if self.mail_off and path.startswith("/api/mail"):
+            return 409, {"error": "disabled", "message": "turn the E-mail page on in Settings -> Features"}
+        if path == "/api/mail/accounts":
+            return 200, self.mail_accounts
+        if (r := re.fullmatch(r"/api/mail/([\w-]+)/messages", path)):
+            msgs = self.mail_unread.get(r[1], [])
+            return 200, {"folder": "INBOX", "total": len(msgs), "messages": msgs}
+        if (r := re.fullmatch(r"/api/mail/([\w-]+)/message", path)):
+            m = next((x for x in self.mail_unread.get(r[1], []) if str(x["uid"]) == q.get("uid")), None)
+            return (200, {**m, "text": "Corps du message", "attachments": []}) if m else (404, {"error": "not_found"})
+        if (r := re.fullmatch(r"/api/mail/([\w-]+)/actions", path)):
+            self.mail_actions.append((r[1], j))
+            return 200, {"ok": True}
+        if path == "/api/mail/outbox":
+            return 200, self.outbox
+        if (r := re.fullmatch(r"/api/mail/outbox/([\w-]+)/(send|deny)", path)):
+            self.outbox_acts.append((r[1], r[2]))
+            return 200, {"id": r[1], "status": "sent" if r[2] == "send" else "denied"}
         if path == "/api/agents":
             return 200, {"agents": self.agents}
         if (r := re.fullmatch(r"/api/agents/(\w+)/(\w+)/(\w+)/thread", path)):

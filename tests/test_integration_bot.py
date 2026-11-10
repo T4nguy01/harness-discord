@@ -219,7 +219,8 @@ async def test_slash_commands_status_stop_close(e):
     await until(lambda: e.fh.sessions["S1"]["model"] == "claude-sonnet-5-5")
 
     await e.fg.dispatch("INTERACTION_CREATE", inter(2, {"name": "close"}, channel="T1", iid="I4"))
-    await until(lambda: e.fd.deleted_channels == ["T1"], what="thread deleted")
+    await until(lambda: ("T1", {"archived": True, "locked": True}) in e.fd.modified, what="thread locked and archived")
+    assert e.fd.deleted_channels == []
     assert e.fh.sessions["S1"]["archived"] is True and e.bot.store.session_of_channel("T1") is None
     assert len(e.fd.followups) == 4
 
@@ -244,7 +245,7 @@ async def test_command_without_session_and_help_and_commands_registered(e):
     await until(lambda: len(e.fd.responses) == 2)
     assert e.fd.responses[1]["type"] == 4
     await e.rest.register_commands(e.gw.app_id, await e.bot.commands())
-    assert {c["name"] for c in e.fd.commands if c.get("type", 1) == 1} == {"new", "sessions", "stop", "close", "model", "status", "help"}
+    assert {c["name"] for c in e.fd.commands if c.get("type", 1) == 1} == {"new", "sessions", "stop", "close", "model", "status", "help", "harness"}
     assert {c["name"] for c in e.fd.commands if c.get("type") == 3} == {"Envoyer à Claude", "Nouvelle session (message)"}
 
 

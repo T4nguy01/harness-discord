@@ -9,6 +9,7 @@ const TXT = {
     mode: "Replies", live: "Live status message, then the answer", final: "Only the final answer",
     feed: "Post alerts, approvals and job reports (notifications feed)", agents: "Post the results of agents (one thread each)", bell: "Bell: ring in the thread when a turn started in the web UI ends (sessions with the bell on)",
     mirror: "Mirror recent web sessions as threads (renamed and archived with the session)", reactions: "Status reactions on your messages (⏳ then ✅ / ❌)", buttons: "Stop and Regenerate buttons under the final answer", dashboard: "Pinned dashboard message in the alerts channel (needs Manage Messages)",
+    proactive: "Proactive messages: morning task summary (08:00), plan above 80 %, failed backup",
     save: "Save", saved: "Saved.", sync: "Resync channels", test: "Send a test message", restart: "Restart the bridge",
     done: "Asked. It happens within 10 seconds.", layout: "Channels", projects: "Project channels", system: "System channels",
     threads: "Session threads", running: "Turns running", setup: "First setup",
@@ -29,6 +30,7 @@ const TXT = {
     mode: "Réponses", live: "Message de statut en direct, puis la réponse", final: "Seulement la réponse finale",
     feed: "Publier les alertes, approbations et rapports de jobs (flux de notifications)", agents: "Publier les résultats des agents (un fil chacun)", bell: "Cloche : sonner dans le fil quand un tour lancé depuis le web se termine (sessions avec la cloche)",
     mirror: "Reproduire les sessions web récentes en fils (renommés et archivés avec la session)", reactions: "Réactions d'état sur tes messages (⏳ puis ✅ / ❌)", buttons: "Boutons Stop et Régénérer sous la réponse finale", dashboard: "Message tableau de bord épinglé dans le salon alertes (demande Gérer les messages)",
+    proactive: "Messages proactifs : résumé des tâches du matin (8 h), forfait au-dessus de 80 %, sauvegarde en échec",
     save: "Enregistrer", saved: "Enregistré.", sync: "Resynchroniser les salons", test: "Envoyer un message de test", restart: "Redémarrer le pont",
     done: "Demandé. Ça se fait en moins de 10 secondes.", layout: "Salons", projects: "Salons de projets", system: "Salons système",
     threads: "Fils de sessions", running: "Tours en cours", setup: "Première installation",
@@ -42,7 +44,7 @@ const TXT = {
   },
 };
 
-const FLAGS = ["relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard"];
+const FLAGS = ["relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive"];
 
 export function mount(el, ctx) {
   const L = TXT[ctx.lang] || TXT.en;
@@ -62,6 +64,7 @@ export function mount(el, ctx) {
         <label class="ui-row" style="flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" style="flex:none;margin-top:2px" class="ui-check" name="reactions"><span class="reactions-l"></span></label>
         <label class="ui-row" style="flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" style="flex:none;margin-top:2px" class="ui-check" name="answer_buttons"><span class="buttons-l"></span></label>
         <label class="ui-row" style="flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" style="flex:none;margin-top:2px" class="ui-check" name="dashboard"><span class="dashboard-l"></span></label>
+        <label class="ui-row" style="flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" style="flex:none;margin-top:2px" class="ui-check" name="proactive"><span class="proactive-l"></span></label>
         <div class="ui-row"><button class="ui-btn save"></button><span class="ui-small msg"></span></div>
       </div>
       <div class="ui-section" style="margin-top:16px"><h2 class="ui-h2 layout-t"></h2><div class="ui-stack layout"></div></div>
@@ -77,7 +80,7 @@ export function mount(el, ctx) {
   $(".owner-l").textContent = L.owner; $(".owner-h").textContent = L.ownerHelp;
   $(".guild-l").textContent = L.guild; $(".guild-h").textContent = L.guildHelp;
   $(".mode-l").textContent = L.mode; $(".feed-l").textContent = L.feed; $(".agents-l").textContent = L.agents; $(".bell-l").textContent = L.bell;
-  $(".mirror-l").textContent = L.mirror; $(".reactions-l").textContent = L.reactions; $(".buttons-l").textContent = L.buttons; $(".dashboard-l").textContent = L.dashboard;
+  $(".mirror-l").textContent = L.mirror; $(".reactions-l").textContent = L.reactions; $(".buttons-l").textContent = L.buttons; $(".dashboard-l").textContent = L.dashboard; $(".proactive-l").textContent = L.proactive;
   $(".save").textContent = L.save; $(".layout-t").textContent = L.layout; $(".setup-t").textContent = L.setup;
   $(".ui-icon-box").append(ctx.icon("message-square"));
   for (const b of el.querySelectorAll("[data-act]")) b.textContent = L[b.dataset.act];

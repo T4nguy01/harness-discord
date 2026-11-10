@@ -10,6 +10,7 @@ log = logging.getLogger("harness_discord.layout")
 
 VIEW, SEND = 1 << 10, 1 << 11
 CATEGORY, TEXT = 4, 0
+ALERTS_SLOWMODE = 2          # seconds between two messages in #alerts
 
 NAMES = {
     "en": {"cat_system": "Harness", "cat_projects": "Projects", "cat_archive": "Archives",
@@ -141,3 +142,16 @@ async def ensure(rest: Rest, lay: dict, guild: str, owner: str, bot: str, projec
     if archive_old and old and not state_lost and not e.reused:   # reused = a previous run of the bridge: never touch the rest
         await e.archive(old, n["cat_archive"])
     return lay
+
+
+async def slow_alerts(rest: Rest, lay: dict) -> None:
+    """A 2 second slow mode on #alerts, once per channel (a burst of alerts cannot flood it). A refusal (no Manage Channels
+    on a channel taken over by name...) is only logged; the channel is not tried again until its id changes."""
+    cid = lay.get("alerts")
+    if not cid or lay.get("alerts_slow") == cid:
+        return
+    try:
+        await rest.modify_channel(cid, rate_limit_per_user=ALERTS_SLOWMODE)
+    except DiscordError as e:
+        log.warning("slow mode not set on the alerts channel: %s", e)
+    lay["alerts_slow"] = cid

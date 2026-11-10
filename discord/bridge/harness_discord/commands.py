@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from . import fmt
 from .discord_api import DiscordError
 from .harness import HarnessError
 from .texts import T
+from .tools import ToolsMixin, focused_option
 
 log = logging.getLogger("harness_discord.commands")
 
@@ -63,23 +65,83 @@ class Pending:
 
 
 
-class CommandsMixin:
+# French names of commands, groups, sub-commands and options (Discord: lowercase, no space, 1-32 characters). The name the
+# bot receives is always the English one; these only change what a French Discord shows.
+NAMES_FR = {"new": "nouvelle", "close": "fermer", "model": "modèle", "status": "statut", "help": "aide", "tasks": "tâches",
+            "task": "tâche", "add": "ajouter", "list": "liste", "run": "lancer", "toggle": "basculer", "health": "santé",
+            "search": "chercher", "backup": "sauvegarde", "queue": "file", "files": "fichiers", "ls": "liste", "get": "envoyer",
+            "unread": "nonlus", "outbox": "envois", "title": "titre", "form": "formulaire", "text": "texte", "query": "requête",
+            "path": "chemin"}
+NAME_OK = re.compile(r"^[-_\w]{1,32}$", re.UNICODE)
+
+
+class CommandsMixin(ToolsMixin):
     """Slash commands for `Bot` (uses its h, rest, gw, store, lay, followers, pending, t, err, menu, where, topics, start...)."""
 
+    def d(self, key: str) -> dict:
+        """Description in the bot's language, plus the other language as a localization (Discord shows it to its users)."""
+        other = "en-US" if self.lang == "fr" else "fr"
+        src = T["en" if other == "en-US" else "fr"]
+        out = {"description": self.t(key)[:100]}
+        if key in src and src[key][:100] != out["description"]:
+            out["description_localizations"] = {other: src[key][:100]}
+        return out
+
+    def n(self, name: str) -> dict:
+        fr = NAMES_FR.get(name)
+        return {"name": name, **({"name_localizations": {"fr": fr}} if fr and fr != name else {})}
+
+    def opt(self, name: str, key: str, kind: int = 3, **extra) -> dict:
+        return {"type": kind, **self.n(name), **self.d(key), **extra}
+
+    def sub(self, name: str, key: str, options: list | None = None, kind: int = 1) -> dict:
+        out = {"type": kind, **self.n(name), **self.d(key)}
+        if options:
+            out["options"] = options
+        return out
+
+    def choice(self, value: str, key: str) -> dict:
+        out = {"name": self.t(key)[:100], "value": value}
+        if self.lang != "fr" and T["fr"].get(key) and T["fr"][key] != out["name"]:
+            out["name_localizations"] = {"fr": T["fr"][key][:100]}
+        elif self.lang == "fr" and T["en"].get(key) and T["en"][key] != out["name"]:
+            out["name_localizations"] = {"en-US": T["en"][key][:100]}
+        return out
+
+    def ctx(self, key: str) -> dict:
+        """A message context menu: its name is shown as is (capitals and spaces allowed, 32 characters at most)."""
+        out = {"name": self.t(key)[:32], "type": 3}
+        other, code = ("en", "en-US") if self.lang == "fr" else ("fr", "fr")
+        if T[other][key][:32] != out["name"]:
+            out["name_localizations"] = {code: T[other][key][:32]}
+        return out
+
     async def commands(self) -> list[dict]:
-        t = self.t
+        sub, opt, grp = self.sub, self.opt, lambda name, key, subs: self.sub(name, key, subs, kind=2)
+        job = lambda: opt("job", "d_job", required=True, autocomplete=True)    # noqa: E731
         return [
-            {"name": "new", "description": t("d_new"), "options": [
-                {"type": 3, "name": "title", "description": t("d_title")},
-                {"type": 3, "name": "topic", "description": t("d_newtopic"), "autocomplete": True}]},
-            {"name": "sessions", "description": t("d_sessions")},
-            {"name": "stop", "description": t("d_stop")},
-            {"name": "close", "description": t("d_close")},
-            {"name": "model", "description": t("d_model"), "options": [{"type": 3, "name": "id", "description": t("d_modelid"), "autocomplete": True}]},
-            {"name": "status", "description": t("d_status")},
-            {"name": "help", "description": t("d_help")},
-            {"name": t("ctx_send"), "type": 3},                  # message context menus (no description allowed)
-            {"name": t("ctx_new"), "type": 3},
+            {**self.n("new"), **self.d("d_new"), "options": [
+                opt("title", "d_title"), opt("topic", "d_newtopic", autocomplete=True), opt("form", "d_newform", 5)]},
+            {**self.n("sessions"), **self.d("d_sessions")},
+            {**self.n("stop"), **self.d("d_stop")},
+            {**self.n("close"), **self.d("d_close")},
+            {**self.n("model"), **self.d("d_model"), "options": [opt("id", "d_modelid", autocomplete=True)]},
+            {**self.n("status"), **self.d("d_status")},
+            {**self.n("help"), **self.d("d_help")},
+            {**self.n("harness"), **self.d("d_harness"), "options": [
+                sub("tasks", "d_tasks", [opt("status", "d_status_f", choices=[self.choice(v, "f_" + v) for v in ("open", "todo", "doing", "done", "all")])]),
+                grp("task", "d_task", [sub("add", "d_task_add")]),
+                grp("cron", "d_cron", [sub("list", "d_cron_list"), sub("run", "d_cron_run", [job()]), sub("toggle", "d_cron_toggle", [job()])]),
+                grp("agent", "d_agent", [sub("run", "d_agent_run", [opt("agent", "d_agentopt", required=True, autocomplete=True), opt("text", "d_agent_text")])]),
+                sub("usage", "d_usage"), sub("health", "d_health"),
+                sub("search", "d_search", [opt("query", "d_query", required=True)]),
+                grp("backup", "d_backup", [sub("status", "d_backup_status"), sub("run", "d_backup_run")]),
+                sub("infra", "d_infra"), sub("queue", "d_queue"),
+                grp("files", "d_files", [sub("ls", "d_files_ls", [opt("path", "d_path")]), sub("get", "d_files_get", [opt("path", "d_path", required=True)])]),
+                grp("mail", "d_mail", [sub("unread", "d_mail_unread"), sub("outbox", "d_mail_outbox")]),
+                sub("audit", "d_audit")]},
+            self.ctx("ctx_send"),                                 # message context menus (no description allowed)
+            self.ctx("ctx_new"),
         ]
 
     async def on_command(self, i: dict) -> None:
@@ -90,8 +152,12 @@ class CommandsMixin:
         ch, in_dm = i["channel_id"], not i.get("guild_id")
         if name == "help":
             return await self.rest.respond(i, 4, self.t("help"), ephemeral=True)
+        if name == "harness":
+            return await self.cmd_harness(i)
         if name in ("new", "sessions") and not self.allowed_here(ch, in_dm):
             return await self.rest.respond(i, 4, self.t("refused_here"), ephemeral=True)
+        if name == "new" and opts.get("form"):
+            return await self.modal_new(i)
         if name == "new":
             return await self.cmd_new(i, ch, in_dm, str(opts.get("title") or "")[:100], str(opts.get("topic") or ""))
         await self.rest.respond(i, 5, ephemeral=True)               # deferred: Harness may take a moment
@@ -104,17 +170,19 @@ class CommandsMixin:
                 return await reply(self.t("no_session"))
             if name == "stop":
                 await self.h.stop(sid)
+                self.done("stop", sid)
                 f = self.followers.get(sid)
                 if f:
                     f.expect = 0
                 return await reply(self.t("stopped"))
             if name == "close":
                 await self.h.archive(sid)
+                self.done("close", sid)
                 if self.store.channel_of(sid):
                     c = self.store.channel_of(sid)
                     self.store.unlink(sid)
                     await reply(self.t("closed"))
-                    return await self.rest.delete_channel(c)
+                    return await self.rest.close_thread(c)                 # locked and archived, still readable
                 if self.store.data.get("dm_current") == sid:
                     self.store.set_dm("")
                 return await reply(self.t("closed"))
@@ -128,6 +196,7 @@ class CommandsMixin:
                     if model is None:
                         return await reply(self.t("model_unknown", model=arg[:60], choices=", ".join(label for _, label in models)))
                     s = await self.h.set_model(sid, model)
+                    self.done("model", f"{sid} {model}")
                     return await reply(self.t("model_set", model=s.get("model") or self.t("default")))
                 s = await self.h.session(sid)
                 return await reply(self.t("model_now", model=s.get("real_model") or s.get("model") or self.t("default")))
@@ -147,7 +216,7 @@ class CommandsMixin:
             return True
         return str(ch) in {v for v in self.lay.values() if isinstance(v, str)}
 
-    async def cmd_new(self, i: dict, ch: str, in_dm: bool, title: str, topic: str = "") -> None:
+    async def cmd_new(self, i: dict, ch: str, in_dm: bool, title: str, topic: str = "", text: str = "") -> None:
         sid = self.store.session_of_channel(ch)
         pid = secrets.token_hex(4)
         self.purge()
@@ -162,7 +231,7 @@ class CommandsMixin:
                     path = resolve_topic(topic, [x for x in await self.topics() if x["project"] == self.project_of(parent)]) or path
                 except HERR as e:
                     return await self.rest.edit_original(i, app, self.err(e))
-            p = Pending(text="", files=[], channel=parent, message="", in_dm=False, title=title)
+            p = Pending(text=text, files=[], channel=parent, message="", in_dm=False, title=title)
             ok = await self.start(p, path)
             msg = self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")) if ok else self.t("start_failed")
             return await self.rest.followup(i, app, msg, ephemeral=True)
@@ -176,13 +245,13 @@ class CommandsMixin:
             return await self.rest.edit_original(i, app, self.err(e))
         path = resolve_topic(topic, topics) if topic else None
         if path:                                                  # the topic was chosen in the command: no menu
-            ok = await self.start(Pending(text="", files=[], channel=ch, message="", in_dm=in_dm, title=title, project=project), path)
+            ok = await self.start(Pending(text=text, files=[], channel=ch, message="", in_dm=in_dm, title=title, project=project), path)
             msg = self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")) if ok else self.t("start_failed")
             return await self.rest.edit_original(i, app, msg)
         if topic:                                                 # typed something that is not one topic: list the matches
             low = " ".join(topic.split()).lower()
             topics = [x for x in topics if low in f"{x['project']}/{x['name']}".lower()] or topics
-        self.pending[pid] = Pending(text="", files=[], channel=ch, message="", in_dm=in_dm, title=title, project=project)
+        self.pending[pid] = Pending(text=text, files=[], channel=ch, message="", in_dm=in_dm, title=title, project=project)
         await self.rest.edit_original(i, app, self.where(topics, len(topics) > MENU_MAX),
                                       components=self.menu(pid, topics, projects=len(topics) > MENU_MAX))
 
@@ -200,7 +269,10 @@ class CommandsMixin:
         focused = next((o for o in i["data"].get("options", []) if o.get("focused")), None)
         q = " ".join(str((focused or {}).get("value") or "").split()).lower()
         try:
-            if owner and focused and i["data"]["name"] == "model":
+            if owner and i["data"]["name"] == "harness":
+                path, hf = focused_option(i["data"].get("options") or [])
+                choices = await self.tool_choices(path, hf) if hf else []
+            elif owner and focused and i["data"]["name"] == "model":
                 choices = [{"name": self.t("default"), "value": "default"}] if not q or q in "default" or q in self.t("default").lower() else []
                 for mid, label in await self.model_list():
                     if not q or q in mid.lower() or q in label.lower():

@@ -35,6 +35,9 @@ T = {
         "help": ("**Harness Discord**\nWrite a message: choose the topic, a thread is created and Claude answers in it.\n"
                  "/new [title] [topic] new session · /sessions recent sessions · /stop stop the turn · /close archive the session\n"
                  "/model [name] show or change the model · /status state of the session · /help this list\n"
+                 "/new form:true opens a form (title, topic, first message).\n"
+                 "/harness: tasks · task add · cron list|run|toggle · agent run · usage · health · search · backup status|run · infra · queue · "
+                 "files ls|get · mail unread|outbox · audit (private answers; anything that runs or changes asks for a button click).\n"
                  "Under an answer: Stop, Regenerate. Right-click a message → Apps: Send to Claude, New session from message."),
         "d_new": "New session (asks the topic)", "d_title": "Title of the session",
         "d_sessions": "Recent sessions", "d_stop": "Stop the running turn",
@@ -91,6 +94,9 @@ T = {
         "help": ("**Harness Discord**\nÉcris un message : choisis le topic, un fil est créé et Claude y répond.\n"
                  "/new [titre] [topic] nouvelle session · /sessions sessions récentes · /stop arrête le tour · /close archive la session\n"
                  "/model [nom] voir ou changer le modèle · /status état de la session · /help cette liste\n"
+                 "/new formulaire:true ouvre un formulaire (titre, topic, premier message).\n"
+                 "/harness : tâches · tâche ajouter · cron liste|lancer|basculer · agent lancer · usage · santé · chercher · sauvegarde état|lancer · infra · file · "
+                 "fichiers liste|envoyer · mail nonlus|envois · audit (réponses privées ; ce qui lance ou modifie demande un clic de confirmation).\n"
                  "Sous une réponse : Stop, Régénérer. Clic droit sur un message → Applications : Envoyer à Claude, Nouvelle session (message)."),
         "d_new": "Nouvelle session (demande le topic)", "d_title": "Titre de la session",
         "d_sessions": "Sessions récentes", "d_stop": "Arrête le tour en cours",
@@ -113,3 +119,8 @@ T = {
         "dash_agents_v": "{n} (en cours {run}, en attente {wait})", "dash_relay": "Dernier relais", "dash_never": "rien pour l'instant",
     },
 }
+
+from .texts_d import TD  # noqa: E402
+
+for _lang in T:
+    T[_lang].update(TD[_lang])

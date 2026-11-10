@@ -184,3 +184,16 @@ def test_api_actions(api):
     code, out = api.handle(api.ctx, "POST", "action", {}, {"action": "rm -rf"})
     assert code == 400 and out["error"] == "bad_action"
     assert api.handle(api.ctx, "GET", "nope", {}, None)[0] == 404
+
+
+def test_proactive_setting_defaults_on_and_is_a_strict_boolean(api, tmp_path, monkeypatch):
+    assert "proactive" in config.BOOLS and config.DEFAULTS["proactive"] is True
+    assert api.handle(api.ctx, "GET", "status", {}, None)["config"]["proactive"] is True
+    for bad in ("false", 0, 1, None, "yes", []):
+        code, out = api.handle(api.ctx, "POST", "config", {}, {"proactive": bad})
+        assert code == 400 and out["error"] == "bad_flag", bad
+    assert not (api.dir / "config.json").exists()
+    r = api.handle(api.ctx, "POST", "config", {}, {"proactive": False})
+    assert r["config"]["proactive"] is False and json.loads((api.dir / "config.json").read_text())["proactive"] is False
+    monkeypatch.setenv("HD_STATE_DIR", str(api.dir))
+    assert config.load_settings()["proactive"] is False

@@ -16,6 +16,7 @@ from . import __version__
 
 log = logging.getLogger("harness_discord.discord")
 API = "https://discord.com/api/v10"
+ARCHIVE_AFTER = 10080         # minutes without a message before a thread is archived: 7 days (Discord allows 60, 1440, 4320, 10080)
 NO_MENTIONS = {"parse": []}
 USER_AGENT = f"DiscordBot (https://github.com/T4nguy01/harness-discord, {__version__})"
 
@@ -153,12 +154,19 @@ class Rest:
         name = name[:100] or "session"
         if message:                                      # a thread under a message of the channel
             return await self.call("POST", f"/channels/{channel}/messages/{message}/threads",
-                                   json={"name": name, "auto_archive_duration": 10080})
+                                   json={"name": name, "auto_archive_duration": ARCHIVE_AFTER})
         return await self.call("POST", f"/channels/{channel}/threads",
-                               json={"name": name, "auto_archive_duration": 10080, "type": 11})
+                               json={"name": name, "auto_archive_duration": ARCHIVE_AFTER, "type": 11})
 
     async def rename(self, channel: str, name: str) -> None:
         await self.call("PATCH", f"/channels/{channel}", json={"name": name[:100]})
+
+    async def close_thread(self, channel: str) -> None:
+        """Archive and lock a thread (nobody can write in it again; it stays readable)."""
+        try:
+            await self.call("PATCH", f"/channels/{channel}", json={"archived": True, "locked": True})
+        except DiscordError as e:
+            log.warning("could not lock thread %s: %s", channel, e)
 
     async def delete_channel(self, channel: str) -> None:
         try:
@@ -220,11 +228,31 @@ class Rest:
         await self.call("POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback",
                         json={"type": 8, "data": {"choices": out}})
 
-    async def followup(self, interaction: dict, app_id: str, content: str, ephemeral: bool = False) -> None:
+    async def modal(self, interaction: dict, custom_id: str, title: str, components: list) -> None:
+        """Answer with a form (type 9): text inputs in action rows. The submit arrives as an interaction of type 5."""
+        await self.call("POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback",
+                        json={"type": 9, "data": {"custom_id": custom_id, "title": title[:45], "components": components}})
+
+    async def followup(self, interaction: dict, app_id: str, content: str, ephemeral: bool = False,
+                       components: list | None = None, embeds: list | None = None) -> None:
         body: dict[str, Any] = {"content": content, "allowed_mentions": NO_MENTIONS}
+        if components is not None:
+            body["components"] = components
+        if embeds is not None:
+            body["embeds"] = embeds
         if ephemeral:
             body["flags"] = 64
         await self.call("POST", f"/webhooks/{app_id}/{interaction['token']}", json=body)
+
+    async def followup_file(self, interaction: dict, app_id: str, content: str, filename: str, data: bytes,
+                            ephemeral: bool = True) -> None:
+        """A follow-up message with one attached file (multipart)."""
+        body: dict[str, Any] = {"content": content, "allowed_mentions": NO_MENTIONS,
+                                "attachments": [{"id": 0, "filename": filename}]}
+        if ephemeral:
+            body["flags"] = 64
+        await self.call("POST", f"/webhooks/{app_id}/{interaction['token']}",
+                        data={"payload_json": json.dumps(body)}, files={"files[0]": (filename, data, "application/octet-stream")})
 
     async def edit_original(self, interaction: dict, app_id: str, content: str | None = None, components: list | None = None,
                             embeds: list | None = None) -> None:
