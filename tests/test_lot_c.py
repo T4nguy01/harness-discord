@@ -452,7 +452,7 @@ async def test_context_menu_owner_only_empty_and_unknown(e):
 async def test_edited_forwarded_message_gets_one_pencil(e):
     link(e)
     await e.fg.dispatch("MESSAGE_CREATE", msg("avant", channel="T1", mid="m1"))
-    await until(lambda: e.fh.posted)
+    await until(lambda: e.fh.posted and "m1" in e.bot.forwarded)
     edited = {"id": "m1", "channel_id": "T1", "content": "après", "author": {"id": OWNER}, "edited_timestamp": "2026-11-10T10:00:00+00:00"}
     await e.fg.dispatch("MESSAGE_UPDATE", edited)
     await until(lambda: ("T1", "m1", "✏️") in e.fd.reactions)
