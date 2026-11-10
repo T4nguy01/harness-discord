@@ -460,7 +460,7 @@ async def test_edited_forwarded_message_gets_one_pencil(e):
     await e.fg.dispatch("MESSAGE_UPDATE", edited)
     await e.fg.dispatch("MESSAGE_UPDATE", {"id": "unknown", "channel_id": "T1", "content": "x", "author": {"id": OWNER}, "edited_timestamp": "t"})
     await e.fg.dispatch("MESSAGE_UPDATE", {"id": "m1", "channel_id": "T1", "embeds": [{}]})            # an embed unfurl, not an edit
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.6)
     assert e.fd.reactions.count(("T1", "m1", "✏️")) == 1
     assert [c for c in e.fd.calls[n:] if "reactions" in c[1]] == []
     assert len(e.fh.posted) == 1                                   # the edit is not sent again
