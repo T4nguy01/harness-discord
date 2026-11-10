@@ -77,7 +77,7 @@ thread per session.
   (failure) and show the cost of the run.
 - **Agents**: each agent gets a thread in `agents` with its results; reply in the thread to start it again.
 - **Bell**: when a turn started elsewhere (web UI) ends in a session with its bell on, a short "✅ title - preview" rings in its thread.
-- **Settings page** in Harness (sidebar): status, owner, reply mode, what to relay, resync, test message, restart.
+- **Settings page** in Harness (sidebar), four tabs: **Overview** (status, setup checklist, resync / test / restart), **Settings** (owner, reply mode, switches grouped by theme with all on / all off, workspace folder for files), **Server** (channels as links, invite link) and **Activity** (audit of the actions run from Discord).
 
 Not possible from outside the server: the two-step sign-in approval (it needs the product's internals).
 
