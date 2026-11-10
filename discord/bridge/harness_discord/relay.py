@@ -63,21 +63,42 @@ def render(e: dict, web_url: str) -> tuple[dict, list[dict]]:
         embed["footer"] = {"text": foot[:200]}
     if isinstance(e.get("at"), (int, float)) and e["at"] > 1e9:
         embed["timestamp"] = datetime.fromtimestamp(e["at"], timezone.utc).isoformat()
-    buttons = []
+    buttons, seen = [], set()
     for a in e.get("actions") or []:
-        if not SAFE_ID.fullmatch(str(a.get("id", ""))):
-            continue
-        label = str(a.get("label") or a["id"])[:80]
+        if not isinstance(a, dict) or not SAFE_ID.fullmatch(str(a.get("id", ""))) or a["id"] in seen:
+            continue                                                # an invalid or duplicate custom_id makes Discord refuse the whole message
+        label = str(a.get("label") or a["id"]).strip()[:80] or str(a["id"])
         if a["id"] == "open":
             url = e.get("url") or ""
             url = web_url + url if url.startswith("/") else url
-            if url.startswith(web_url + "/"):                       # only links into Harness itself
+            if web_url.startswith(("http://", "https://")) and url.startswith(web_url + "/") and len(url) <= 512:   # only links into Harness itself
+                seen.add(a["id"])
                 buttons.append({"type": 2, "style": 5, "label": label, "url": url})
             continue
+        if not re.fullmatch(r"[0-9]{1,20}", str(e.get("id", ""))):   # the click handler only accepts numeric event ids
+            continue
+        seen.add(a["id"])
         buttons.append({"type": 2, "style": STYLE.get(a.get("style"), 2), "label": label,
                         "custom_id": f"fa:{e['id']}:{a['id']}"})
     comps = [{"type": 1, "components": buttons[:5]}] if buttons else []
     return embed, comps
+
+
+def agent_embed(part: str, ok: bool, agent: str, n: int, total: int, m: dict) -> dict:
+    """One part of an agent result: green/red, the agent as author (first part), cost and part number in the footer."""
+    embed: dict = {"description": part, "color": COLOR["success"] if ok else COLOR["error"]}
+    if n == 0:
+        embed["author"] = {"name": fmt.clip(f"{'✅' if ok else '🛑'} {agent}", 250)}
+    foot = []
+    if total > 1:
+        foot.append(f"{n + 1}/{total}")
+    if n == total - 1 and m.get("cost"):
+        foot.append(f"{m['cost']:.2f} $")
+    if foot:
+        embed["footer"] = {"text": " · ".join(foot)}
+    if n == total - 1 and isinstance(m.get("at"), (int, float)) and m["at"] > 1e9:
+        embed["timestamp"] = datetime.fromtimestamp(m["at"], timezone.utc).isoformat()
+    return embed
 
 
 class Relay:
@@ -302,9 +323,7 @@ class Relay:
             if cut:
                 parts[-1] = parts[-1] + "\n\n" + self.bot.t("truncated")
             for n, part in enumerate(parts):
-                embed: dict = {"description": part, "color": COLOR["success"] if ok else COLOR["error"]}
-                if n == len(parts) - 1 and m.get("cost"):
-                    embed["footer"] = {"text": f"{m['cost']:.2f} $"}
+                embed = agent_embed(part, ok, a.get("display_name") or name, n, len(parts), m)
                 link = web_link(self.bot) if n == len(parts) - 1 else None            # "Open in Harness" under the last part
                 sent = await self.bot.rest.send(info["thread"], "", embeds=[embed], silent=False, components=link)
                 self.bot.remember(sent["id"], "agent:" + path)
