@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 import harness_discord.bot as botmod
+import harness_discord.follow as followmod
 from fakes import OWNER, PASSWORD, TOKEN, TOPIC, FakeGateway, FakeHarness, until
 from harness_discord import discord_api, layout, relay
 from harness_discord.bot import Bot, Pending
@@ -341,12 +342,12 @@ def test_follower_gives_up_after_consecutive_failures(tmp_path, fast_sleep):
         bot.h = StreamH(HarnessError(502, "bad_gateway"))
         await bot.follow("S1", "T1", 0, 1)
         await asyncio.wait_for(settle(bot), 5)
-        assert bot.h.opened == botmod.FOLLOW_MAX_FAILS
+        assert bot.h.opened == followmod.FOLLOW_MAX_FAILS
     run(go())
 
 
 def test_follower_gives_up_when_failing_for_too_long(tmp_path, fast_sleep, monkeypatch):
-    monkeypatch.setattr(botmod, "FOLLOW_GIVE_UP", -1)
+    monkeypatch.setattr(followmod, "FOLLOW_GIVE_UP", -1)
     async def go():
         bot, rest, h = make(tmp_path)
         bot.h = StreamH(httpx.ConnectError("refused"))

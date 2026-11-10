@@ -181,7 +181,7 @@ async def test_attachment_is_downloaded_uploaded_and_referenced(e):
     await e.fg.dispatch("MESSAGE_CREATE", msg("voici", channel="T1", attachments=att))
     await until(lambda: e.fh.posted, what="forward")
     assert e.fh.uploads == [{"topic": TOPIC, "name": "a.txt", "mime": "text/plain", "data": b"hello file"}]
-    assert e.fh.posted[0][1] == {"text": "voici", "attachments": [f"/root/maxxing/{TOPIC}/attachments/2026-11/a.txt"]}
+    assert e.fh.posted[0][1] == {"text": "voici", "attachments": [f"/workspace/{TOPIC}/attachments/2026-11/a.txt"]}
     voice = [{"url": f"{e.fh.url}/cdn/v.ogg", "filename": "voice-message.ogg", "size": 4, "content_type": "audio/ogg", "flags": 1 << 13}]
     await e.fg.dispatch("MESSAGE_CREATE", msg("", channel="T1", mid="m2", attachments=voice))
     await until(lambda: len(e.fh.posted) == 2, what="voice forward")
@@ -197,7 +197,7 @@ async def test_attachment_on_new_session_and_download_failure(e):
     await e.fg.dispatch("MESSAGE_CREATE", msg("fichiers", attachments=att))
     await until(lambda: e.fh.created, what="session")
     # missing file: user told, the rest still goes
-    assert e.fh.created[0]["attachments"] == [f"/root/maxxing/{TOPIC}/attachments/2026-11/a.txt"]
+    assert e.fh.created[0]["attachments"] == [f"/workspace/{TOPIC}/attachments/2026-11/a.txt"]
     assert any("bad.txt" in m["content"] for m in e.fd.in_channel(PROJECT_CH))
 
 

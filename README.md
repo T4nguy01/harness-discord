@@ -18,12 +18,25 @@ thread per session.
   following the Harness language).
 - **Alerts and notifications**: the Harness feed is posted in `alerts` (server problems, updates, sign-ins),
   `crons` (job reports), `agents` (requests with **Allow / Deny** buttons, failures) and `notifications` (everything else).
-  An alert handled in Harness is updated in Discord too.
+  An alert handled in Harness is updated in Discord too. They are posted as **embeds**: alerts and notifications are
+  coloured by level (info, warning, error...) with a footer and a timestamp; agent results are green (success) or red
+  (failure) and show the cost of the run.
 - **Agents**: each agent gets a thread in `agents` with its results; reply in the thread to start it again.
 - **Bell**: when a turn started elsewhere (web UI) ends in a session with its bell on, a short "✅ title - preview" rings in its thread.
 - **Settings page** in Harness (sidebar): status, owner, reply mode, what to relay, resync, test message, restart.
 
 Not possible from outside the server: the two-step sign-in approval (it needs the product's internals).
+
+**Opt-in.** The relays are settings on the Discord page: `relay_feed` (alerts, approvals, job reports), `relay_agents`
+(agent results) and `relay_bell` (bell in session threads) can each be switched off there. The **Send a test message** button
+and the relays are the only things that post on their own: with them off, and as long as you write nothing, nothing is sent
+to Discord. The bridge only ever answers the owner id you set.
+
+## What the `discord/` folder contains
+
+`discord/` is a page extension (`manifest.json`, `api.py`, `page.js`) **and also** the bridge itself (`bridge/`, a Python
+service) with `install.sh` / `uninstall.sh`. Installing it therefore **runs code on your server**, as a systemd service that
+signs in to Harness with your password. Read it first; the community library will label it "Runs code on the server".
 
 ## Requirements
 
@@ -41,7 +54,9 @@ Not possible from outside the server: the two-step sign-in approval (it needs th
 
 1. Copy the `discord/` folder to `<workspace>/extensions/discord/` (or let Harness install it from the community library).
 2. As root: `sh <workspace>/extensions/discord/install.sh` (creates a virtualenv outside the folder and the `harness-discord`
-   systemd service).
+   systemd service; if the service already runs it is restarted). The service reads the keys with `maxxing keys get`, so
+   `maxxing` must be on its PATH (`command -v maxxing`; the unit uses `/usr/local/bin:/usr/bin:/bin`, the installer checks it).
+   The unit can write only the state folder `/var/lib/claude-maxxing/extensions/discord/`.
 3. Open **Discord** in the Harness sidebar, enter your Discord user id (Discord: Settings -> Advanced -> Developer mode,
    right-click your name -> Copy user ID). The bot builds the categories and channels by itself.
 4. Optional, the skill: `ln -s <this repo>/skill/discord-bridge <workspace>/.claude/skills/discord-bridge`.
@@ -56,10 +71,11 @@ Test: write in a project channel, or press **Send a test message** on the Discor
 
 ## Remove
 
-`systemctl disable --now harness-discord && rm /etc/systemd/system/harness-discord.service`, delete
-`<workspace>/extensions/discord/` and the virtualenv `/var/lib/claude-maxxing/harness-discord-venv`, then `systemctl daemon-reload`, delete the state folder
-`/var/lib/claude-maxxing/extensions/discord/` and the skill link `<workspace>/.claude/skills/discord-bridge`, then delete the
-Discord categories and the bot from the server and the two keys from Settings -> Keys.
+As root: `sh <workspace>/extensions/discord/uninstall.sh` (asks for confirmation; `--yes` skips it). It stops and disables
+the service and deletes the unit and the virtualenv. It keeps the state folder `/var/lib/claude-maxxing/extensions/discord/`
+and your keys, unless you pass `--purge` (deletes the state folder). It never touches your Discord server: delete the
+categories (Harness, Projects, Archives) and the bot yourself, then the folder `<workspace>/extensions/discord/`, the skill
+link `<workspace>/.claude/skills/discord-bridge` and the two keys in Settings -> Keys.
 
 ## Limits and security
 
@@ -72,6 +88,6 @@ Discord categories and the bot from the server and the two keys from Settings ->
 
 ## Develop
 
-`discord/bridge/` is a small Python package (`httpx`, `websockets`); tests: from the repo root, `pip install -e discord/bridge pytest && pytest`.
+`discord/bridge/` is a small Python package (`httpx`, `websockets`); tests: from the repo root, `pip install -e "discord/bridge[dev]" && pytest` (the async tests need no pytest plugin).
 
 MIT licence.

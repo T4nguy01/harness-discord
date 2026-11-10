@@ -54,6 +54,67 @@ def is_private(channel: dict, guild: str) -> bool:
     return False
 
 
+class _Ensure:
+    """What `ensure` needs while it works: the channels that exist, and the ones taken over by name."""
+
+    def __init__(self, rest: Rest, lay: dict, guild: str, owner: str, bot: str, chans: dict):
+        self.rest, self.lay, self.guild, self.owner, self.bot, self.chans = rest, lay, guild, owner, bot, chans
+        self.reused: set[str] = set()                              # existing channels the bridge took over by name
+
+    def overwrites(self) -> list:
+        return private(self.guild, self.owner, self.bot)
+
+    async def lock(self, c: dict) -> bool:
+        """A reused category / channel must be private: make it so, or refuse it if that is impossible."""
+        if is_private(c, self.guild):
+            return True
+        try:
+            await self.rest.modify_channel(c["id"], permission_overwrites=self.overwrites())
+        except DiscordError as e:
+            log.warning("not reusing %s (%s): visible to @everyone and cannot be made private: %s", c["name"], c["id"], e)
+            return False
+        c["permission_overwrites"] = self.overwrites()
+        return True
+
+    async def cat(self, key: str, title: str, overwrites: list | None) -> str:
+        cid = self.lay.get(key)
+        if cid and cid in self.chans:
+            return cid
+        for c in self.chans.values():                              # reuse a category of that name
+            if c["type"] == CATEGORY and c["name"].lower() == title.lower():
+                if overwrites is not None and not await self.lock(c):
+                    continue
+                self.lay[key] = c["id"]
+                self.reused.add(c["id"])
+                return c["id"]
+        c = await self.rest.create_channel(self.guild, title, CATEGORY, overwrites=overwrites)
+        self.chans[c["id"]] = c
+        self.lay[key] = c["id"]
+        return c["id"]
+
+    async def text(self, key: str, name: str, parent: str, topic: str) -> str:
+        cid = self.lay.get(key)
+        if cid and cid in self.chans:
+            return cid
+        for c in self.chans.values():
+            if c["type"] == TEXT and c.get("parent_id") == parent and c["name"] == name:
+                if not await self.lock(c):
+                    continue
+                self.reused.add(c["id"])
+                return c["id"]
+        c = await self.rest.create_channel(self.guild, name, TEXT, parent=parent, topic=topic, overwrites=self.overwrites())
+        self.chans[c["id"]] = c
+        return c["id"]
+
+    async def archive(self, old: list[str], title: str) -> None:
+        archive = await self.cat("cat_archive", title, None)
+        for cid in old:
+            try:
+                await self.rest.modify_channel(cid, parent_id=archive)
+            except DiscordError as e:
+                log.warning("could not archive channel %s: %s", cid, e)
+
+
 async def ensure(rest: Rest, lay: dict, guild: str, owner: str, bot: str, projects: list[dict], lang: str,
                  archive_old: bool = True, state_lost: bool = False) -> dict:
     """Create what is missing (idempotent). `lay` is the stored layout; returns the updated one.
@@ -63,69 +124,20 @@ async def ensure(rest: Rest, lay: dict, guild: str, owner: str, bot: str, projec
     chans = {c["id"]: c for c in await rest.guild_channels(guild)}
     first_run = not lay.get("guild")
     lay["guild"] = guild
-    ow = private(guild, owner, bot)
-    reused: set[str] = set()                                       # existing channels the bridge took over by name
-
-    async def lock(c: dict) -> bool:
-        """A reused category / channel must be private: make it so, or refuse it if that is impossible."""
-        if is_private(c, guild):
-            return True
-        try:
-            await rest.modify_channel(c["id"], permission_overwrites=private(guild, owner, bot))
-        except DiscordError as e:
-            log.warning("not reusing %s (%s): visible to @everyone and cannot be made private: %s", c["name"], c["id"], e)
-            return False
-        c["permission_overwrites"] = private(guild, owner, bot)
-        return True
-
-    async def cat(key: str, title: str, overwrites: list | None) -> str:
-        cid = lay.get(key)
-        if cid and cid in chans:
-            return cid
-        for c in chans.values():                                   # reuse a category of that name
-            if c["type"] == CATEGORY and c["name"].lower() == title.lower():
-                if overwrites is not None and not await lock(c):
-                    continue
-                lay[key] = c["id"]
-                reused.add(c["id"])
-                return c["id"]
-        c = await rest.create_channel(guild, title, CATEGORY, overwrites=overwrites)
-        chans[c["id"]] = c
-        lay[key] = c["id"]
-        return c["id"]
-
-    async def text(key: str, name: str, parent: str, topic: str) -> str:
-        cid = lay.get(key)
-        if cid and cid in chans:
-            return cid
-        for c in chans.values():
-            if c["type"] == TEXT and c.get("parent_id") == parent and c["name"] == name:
-                if not await lock(c):
-                    continue
-                reused.add(c["id"])
-                return c["id"]
-        c = await rest.create_channel(guild, name, TEXT, parent=parent, topic=topic, overwrites=private(guild, owner, bot))
-        chans[c["id"]] = c
-        return c["id"]
-
+    e = _Ensure(rest, lay, guild, owner, bot, chans)
     old = [c["id"] for c in chans.values() if c["type"] == TEXT] if first_run else []       # what existed before us
-    system = await cat("cat_system", n["cat_system"], ow)
-    projs = await cat("cat_projects", n["cat_projects"], ow)
+    system = await e.cat("cat_system", n["cat_system"], e.overwrites())
+    projs = await e.cat("cat_projects", n["cat_projects"], e.overwrites())
     for k in ("alerts", "notifications", "crons", "agents"):
-        lay[k] = await text(k, n[k], system, n["t_" + k])
+        lay[k] = await e.text(k, n[k], system, n["t_" + k])
     lay.setdefault("projects", {})
     for p in projects:
         pid = lay["projects"].get(p["name"])
         if pid and pid in chans:
             continue
-        lay["projects"][p["name"]] = await text("p:" + p["name"], slug(p["name"]), projs,
-                                                (p.get("emoji", "") + " " if p.get("emoji") else "") + n["t_project"].format(name=p["name"]))
-    old = [c for c in old if c not in reused]
-    if archive_old and old and not state_lost and not reused:     # reused = a previous run of the bridge: never touch the rest
-        archive = await cat("cat_archive", n["cat_archive"], None)
-        for cid in old:
-            try:
-                await rest.modify_channel(cid, parent_id=archive)
-            except DiscordError as e:
-                log.warning("could not archive channel %s: %s", cid, e)
+        lay["projects"][p["name"]] = await e.text("p:" + p["name"], slug(p["name"]), projs,
+                                                  (p.get("emoji", "") + " " if p.get("emoji") else "") + n["t_project"].format(name=p["name"]))
+    old = [c for c in old if c not in e.reused]
+    if archive_old and old and not state_lost and not e.reused:   # reused = a previous run of the bridge: never touch the rest
+        await e.archive(old, n["cat_archive"])
     return lay

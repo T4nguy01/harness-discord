@@ -9,7 +9,11 @@ The bridge is a service (`harness-discord`) that signs in to Harness like the ow
 (settings, status) in `<workspace>/extensions/discord/`. Secrets live only in Settings -> Keys:
 `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (never print them, never write them in a file or a message).
 Settings (not secret): `<state>/extensions/discord/config.json` (`owner_id`, `guild_id`, `reply_mode`, `relay_feed`,
-`relay_agents`, `relay_bell`); status: `status.json` next to it. The Discord page edits them; a change applies within 10 s.
+`relay_agents`, `relay_bell`); status: `status.json` next to it. The Discord page edits them. The bridge re-reads the file every 10 s, but a setting takes effect when it is used:
+`owner_id`, `reply_mode`, `relay_feed`, `relay_bell`: within 10 s; `relay_agents`: within 30 s (agents are polled every third
+pass); `guild_id`: at the next channel sync (Resync button: within 10 s, otherwise every 10 minutes); keys
+(`DISCORD_BOT_TOKEN`, `HARNESS_PASSWORD`): only after a restart of the service. The *Test message* and *Resync*
+buttons leave a flag file that the bridge picks up within 10 s.
 
 ## Set up (the user does the Discord side)
 1. Discord developer portal: new application -> Bot -> enable "Message Content Intent" -> copy the token.
@@ -18,7 +22,9 @@ Settings (not secret): `<state>/extensions/discord/config.json` (`owner_id`, `gu
    Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links. The server should be the user's own.
 3. Keys: add `DISCORD_BOT_TOKEN` and `HARNESS_PASSWORD` (the Harness password). Two-step sign-in must be off
    (`maxxing 2fa status`): the bridge cannot answer it.
-4. `sh <workspace>/extensions/discord/install.sh` (root): virtualenv + systemd service.
+4. `sh <workspace>/extensions/discord/install.sh` (root): virtualenv + systemd service (restarts it if already running).
+   Remove: `sh <workspace>/extensions/discord/uninstall.sh` (`--purge` also deletes the state folder).
+   `maxxing` must be on the service PATH (`command -v maxxing`; the unit uses `/usr/local/bin:/usr/bin:/bin`).
 5. The owner's Discord id in the Discord page. The bot then creates private categories: *Harness* (alerts,
    notifications, crons, agents) and *Projects* (one channel per Harness project, one thread per session).
 

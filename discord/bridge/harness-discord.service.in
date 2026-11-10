@@ -10,6 +10,7 @@ ExecStart="@VENV@/bin/python" -m harness_discord
 Restart=always
 RestartSec=5
 # Keys (DISCORD_BOT_TOKEN, HARNESS_PASSWORD) are read from the Harness Keys vault with `maxxing keys get`.
+# PATH must contain `maxxing` (check: command -v maxxing; the installer refuses to go on otherwise).
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 
 # Hardening: the bridge only needs the network and its state folder.
@@ -17,7 +18,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/lib/claude-maxxing
+# The only folder the bridge writes (config, state, status). The virtualenv is read-only at run time.
+# install.sh creates it first: a missing path would stop the unit from starting.
+ReadWritePaths=@STATE@
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

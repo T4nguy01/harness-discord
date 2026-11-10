@@ -11,6 +11,9 @@ const TXT = {
     save: "Save", saved: "Saved.", sync: "Resync channels", test: "Send a test message", restart: "Restart the bridge",
     done: "Asked. It happens within 10 seconds.", layout: "Channels", projects: "Project channels", system: "System channels",
     threads: "Session threads", running: "Turns running", setup: "First setup",
+    errTitle: "The bridge cannot connect to Discord", errIntent: "Fix: in the Discord developer portal, Bot page, turn on \"Message Content Intent\", save, then press Restart the bridge.",
+    errToken: "Fix: in the developer portal, Bot page, reset the token, paste the new one in Settings → Keys (DISCORD_BOT_TOKEN), then press Restart the bridge.",
+    errBoth: "Fix: check that \"Message Content Intent\" is on (developer portal, Bot page) and that DISCORD_BOT_TOKEN is the current token (reset it if unsure), then press Restart the bridge.",
     steps: ["Create an application and a bot on the Discord developer portal, enable \"Message Content Intent\".",
             "Invite it to your server with the scopes bot + applications.commands (never Administrator; permissions: View Channels, Manage Channels, Manage Roles (to make channels private), Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Add Reactions, Embed Links).",
             "Add DISCORD_BOT_TOKEN and HARNESS_PASSWORD in Settings → Keys, and your user id below.",
@@ -27,6 +30,9 @@ const TXT = {
     save: "Enregistrer", saved: "Enregistré.", sync: "Resynchroniser les salons", test: "Envoyer un message de test", restart: "Redémarrer le pont",
     done: "Demandé. Ça se fait en moins de 10 secondes.", layout: "Salons", projects: "Salons de projets", system: "Salons système",
     threads: "Fils de sessions", running: "Tours en cours", setup: "Première installation",
+    errTitle: "Le pont ne peut pas se connecter à Discord", errIntent: "Correction : sur le portail développeur Discord, page Bot, active « Message Content Intent », enregistre, puis appuie sur Redémarrer le pont.",
+    errToken: "Correction : sur le portail développeur, page Bot, régénère le jeton, colle le nouveau dans Réglages → Clés (DISCORD_BOT_TOKEN), puis appuie sur Redémarrer le pont.",
+    errBoth: "Correction : vérifie que « Message Content Intent » est activé (portail développeur, page Bot) et que DISCORD_BOT_TOKEN est le jeton actuel (régénère-le au doute), puis appuie sur Redémarrer le pont.",
     steps: ["Crée une application et un bot sur le portail développeur Discord, active « Message Content Intent ».",
             "Invite-le sur ton serveur avec les portées bot + applications.commands (jamais Administrateur ; permissions : Voir les salons, Gérer les salons, Gérer les rôles (pour rendre les salons privés), Envoyer des messages, Envoyer des messages dans les fils, Créer des fils publics, Gérer les fils, Voir les anciens messages, Ajouter des réactions, Intégrer des liens).",
             "Ajoute DISCORD_BOT_TOKEN et HARNESS_PASSWORD dans Réglages → Clés, et ton identifiant ci-dessous.",
@@ -39,6 +45,7 @@ export function mount(el, ctx) {
   el.innerHTML = `
     <div class="ui-page" style="max-width:760px">
       <h1 class="ui-h1"></h1><p class="ui-muted sub"></p>
+      <div class="ui-card err" role="alert" style="display:none;border:1px solid #d33;margin-bottom:12px"><div style="padding:12px"><b class="err-t"></b><div class="err-m ui-small"></div><div class="err-h"></div></div></div>
       <div class="ui-card"><div class="ui-card-header"><div class="ui-icon-box"></div><div><b class="state"></b><span class="ui-small keys"></span></div></div></div>
       <div class="ui-section ui-stack form" style="margin-top:16px">
         <div class="ui-field"><label class="ui-label owner-l"></label><input class="ui-input" name="owner_id" inputmode="numeric"><span class="ui-small ui-muted owner-h"></span></div>
@@ -75,6 +82,12 @@ export function mount(el, ctx) {
   const render = (s) => {
     const ok = s.connected;
     $(".state").textContent = s.service !== "active" ? L.stopped : ok ? L.connected : L.offline;
+    const err = $(".err"), text = s.error || "";
+    err.style.display = text ? "" : "none";
+    if (text) {
+      $(".err-t").textContent = L.errTitle; $(".err-m").textContent = text;
+      $(".err-h").textContent = /4014|4013|intent/i.test(text) ? L.errIntent : /4004|token/i.test(text) ? L.errToken : L.errBoth;
+    }
     $(".keys").textContent = ` · DISCORD_BOT_TOKEN: ${s.keys.token ? L.keyOk : L.keyMissing} · HARNESS_PASSWORD: ${s.keys.password ? L.keyOk : L.keyMissing}`;
     if (!loaded) {
       const f = $(".form");

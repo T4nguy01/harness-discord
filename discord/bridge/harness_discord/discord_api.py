@@ -12,9 +12,12 @@ from urllib.parse import urlparse
 import httpx
 import websockets
 
+from . import __version__
+
 log = logging.getLogger("harness_discord.discord")
 API = "https://discord.com/api/v10"
 NO_MENTIONS = {"parse": []}
+USER_AGENT = f"DiscordBot (https://github.com/T4nguy01/harness-discord, {__version__})"
 
 STABLE_AFTER = 30.0           # a connection that lasted this long resets the reconnect delay
 # gateway close codes after which retrying is pointless: authentication failed, bad shard, bad / disallowed intents
@@ -39,7 +42,7 @@ class DiscordError(Exception):
 class Rest:
     def __init__(self, token: str, transport: httpx.AsyncBaseTransport | None = None):
         self.http = httpx.AsyncClient(base_url=API, timeout=30, transport=transport,
-                                      headers={"Authorization": f"Bot {token}", "User-Agent": "HarnessDiscord (https://github.com, 0.1)"})
+                                      headers={"Authorization": f"Bot {token}", "User-Agent": USER_AGENT})
 
     async def close(self) -> None:
         await self.http.aclose()
@@ -296,58 +299,64 @@ class Gateway:
         url = (self.resume_url + "/?v=10&encoding=json") if self.resume_url and self.session_id else self.url
         async with websockets.connect(url, max_size=2 ** 24, ping_interval=None) as ws:
             hello = json.loads(await ws.recv())
-            interval = hello["d"]["heartbeat_interval"] / 1000
             acked = {"ok": True}
-
-            async def heartbeat() -> None:
-                await asyncio.sleep(interval * random.random())
-                while True:
-                    if not acked["ok"]:
-                        await ws.close(4000)
-                        return
-                    acked["ok"] = False
-                    await ws.send(json.dumps({"op": 1, "d": self.seq}))
-                    await asyncio.sleep(interval)
-
-            hb = asyncio.create_task(heartbeat())
+            hb = asyncio.create_task(self._heartbeat(ws, hello["d"]["heartbeat_interval"] / 1000, acked))
             try:
-                if self.session_id and self.seq is not None:
-                    await ws.send(json.dumps({"op": 6, "d": {"token": self.token, "session_id": self.session_id, "seq": self.seq}}))
-                else:
-                    await ws.send(json.dumps({"op": 2, "d": {
-                        "token": self.token, "intents": INTENTS,
-                        "properties": {"os": "linux", "browser": "harness-discord", "device": "harness-discord"}}}))
+                await self._identify(ws)
                 async for raw in ws:
-                    m = json.loads(raw)
-                    op = m.get("op")
-                    if m.get("s") is not None:
-                        self.seq = m["s"]
-                    if op == 11:
-                        acked["ok"] = True
-                    elif op == 1:
-                        await ws.send(json.dumps({"op": 1, "d": self.seq}))
-                    elif op == 7:                              # reconnect asked by Discord
-                        await ws.close(4000)               # not 1000: that would invalidate the session (RESUME stays possible)
+                    if await self._on_frame(ws, json.loads(raw), acked):
                         return
-                    elif op == 9:                              # invalid session
-                        if not m.get("d"):
-                            self.session_id, self.seq, self.resume_url = None, None, None
-                        await asyncio.sleep(random.uniform(1, 5))
-                        await ws.close(4000)
-                        return
-                    elif op == 0:
-                        t, d = m["t"], m["d"]
-                        if t == "READY":
-                            self.session_id, self.resume_url = d["session_id"], d["resume_gateway_url"]
-                            self.app_id, self.user_id = d["application"]["id"], d["user"]["id"]
-                            self.ready.set()
-                        elif t == "RESUMED":
-                            self.ready.set()
-                        task = asyncio.create_task(self._dispatch(t, d))
-                        self._tasks.add(task)
-                        task.add_done_callback(self._tasks.discard)
             finally:
                 hb.cancel()
+
+    async def _heartbeat(self, ws: Any, interval: float, acked: dict) -> None:
+        await asyncio.sleep(interval * random.random())
+        while True:
+            if not acked["ok"]:
+                await ws.close(4000)
+                return
+            acked["ok"] = False
+            await ws.send(json.dumps({"op": 1, "d": self.seq}))
+            await asyncio.sleep(interval)
+
+    async def _identify(self, ws: Any) -> None:
+        if self.session_id and self.seq is not None:
+            await ws.send(json.dumps({"op": 6, "d": {"token": self.token, "session_id": self.session_id, "seq": self.seq}}))
+        else:
+            await ws.send(json.dumps({"op": 2, "d": {
+                "token": self.token, "intents": INTENTS,
+                "properties": {"os": "linux", "browser": "harness-discord", "device": "harness-discord"}}}))
+
+    async def _on_frame(self, ws: Any, m: dict, acked: dict) -> bool:
+        """One gateway frame. True when this connection must end (Discord asked for a reconnect)."""
+        op = m.get("op")
+        if m.get("s") is not None:
+            self.seq = m["s"]
+        if op == 11:
+            acked["ok"] = True
+        elif op == 1:
+            await ws.send(json.dumps({"op": 1, "d": self.seq}))
+        elif op == 7:                                         # reconnect asked by Discord
+            await ws.close(4000)                              # not 1000: that would invalidate the session (RESUME stays possible)
+            return True
+        elif op == 9:                                         # invalid session
+            if not m.get("d"):
+                self.session_id, self.seq, self.resume_url = None, None, None
+            await asyncio.sleep(random.uniform(1, 5))
+            await ws.close(4000)
+            return True
+        elif op == 0:
+            t, d = m["t"], m["d"]
+            if t == "READY":
+                self.session_id, self.resume_url = d["session_id"], d["resume_gateway_url"]
+                self.app_id, self.user_id = d["application"]["id"], d["user"]["id"]
+                self.ready.set()
+            elif t == "RESUMED":
+                self.ready.set()
+            task = asyncio.create_task(self._dispatch(t, d))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        return False
 
     async def _dispatch(self, t: str, d: dict) -> None:
         try:

@@ -390,7 +390,7 @@ class FakeHarness:
                 mime = (re.search(rb"Content-Type: ([^\r\n]+)", h) or [None, b""])[1].decode()
                 data = data.removesuffix(b"\r\n")
                 self.uploads.append({"topic": q.get("path"), "name": name, "mime": mime, "data": data})
-                files.append({"path": f"/root/maxxing/{q.get('path')}/attachments/2026-11/{name}", "name": name, "size": len(data), "mime": mime})
+                files.append({"path": f"/workspace/{q.get('path')}/attachments/2026-11/{name}", "name": name, "size": len(data), "mime": mime})
             return 200, {"files": files}
         if path == "/api/feed":
             return 200, {"events": sorted(self.feed, key=lambda e: -e["id"])[: int(q.get("limit", 50))], "more": False, "unread": 0, "pending": 0}
