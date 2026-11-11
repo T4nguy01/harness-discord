@@ -384,7 +384,7 @@ class Bot(CommandsMixin, FollowMixin):
         """The owner edits a message already handed to Claude: it is not sent again. A reaction says so (an edit has
         no interaction to answer with), once per message."""
         mid = str(d.get("id", ""))
-        if (d.get("author") or {}).get("id", self.owner) != self.owner or mid not in self.forwarded or not d.get("edited_timestamp"):
+        if (d.get("author") or {}).get("id") != self.owner or mid not in self.forwarded or not d.get("edited_timestamp"):
             return
         if mid in self.edit_marked:
             return

@@ -66,6 +66,11 @@ def audit_lines(e):
     return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
 
 
+async def audited(e, cmd, target, result="ok"):
+    """The audit line is written just after the action: wait for it."""
+    await until(lambda: (cmd, target, result) in [(x["cmd"], x["target"], x["result"]) for x in audit_lines(e)], what=f"audit {cmd}")
+
+
 # === 3. localised commands =================================================================================================
 
 def walk(cmds):
@@ -316,7 +321,7 @@ async def test_agent_run_confirms_then_runs_with_the_text(e):
     await click(e, yes["custom_id"], "I2")
     await until(lambda: e.fh.agent_runs, what="agent run")
     assert e.fh.agent_runs == [("dev/chat/bob", {"text": "fais le point"})]
-    assert ("agent.run", "dev/chat/bob", "ok") in [(x["cmd"], x["target"], x["result"]) for x in audit_lines(e)]
+    await audited(e, "agent.run", "dev/chat/bob")
     assert "fais le point" not in json.dumps(audit_lines(e))                          # never the content
 
 
@@ -539,7 +544,7 @@ async def test_mail_outbox_send_needs_a_confirmation_that_names_the_recipient(e)
     assert "client@x.org" in ask["content"] and "Devis" in ask["content"] and e.fh.outbox_acts == []
     await click(e, next(b for b in buttons(ask) if b["custom_id"].startswith("cf:y:"))["custom_id"], "I3")
     await until(lambda: e.fh.outbox_acts == [("o_abc123", "send")], what="send")
-    assert ("outbox.send", "o_abc123", "ok") in [(x["cmd"], x["target"], x["result"]) for x in audit_lines(e)]
+    await audited(e, "outbox.send", "o_abc123")
     e.fh.outbox = []
     await hcmd(e, ["mail", "outbox"], iid="I4")
     assert (await answer(e, "I4"))["content"]

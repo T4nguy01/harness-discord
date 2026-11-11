@@ -10,6 +10,7 @@ from pathlib import Path
 SERVICE = "harness-discord"
 MODES = ("live", "final")
 PERMISSIONS = 326686043216   # View/Manage Channels, Manage Roles, Send (+ in threads), Create/Manage Threads, History, Reactions, Embeds, Manage Messages
+SYSTEM_DIRS = ("etc", "proc", "sys", "dev", "boot", "usr", "bin", "sbin", "lib", "lib64", "run", "var", "snap")
 FLAGS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive", "tool_approvals")
 
 
@@ -117,6 +118,8 @@ def handle(ctx, method, path, query, body):
             v = str(body["workspace_dir"]).strip()
             if v and (not v.startswith("/") or ".." in v.split("/") or not Path(v).is_dir()):
                 return 400, {"error": "bad_workspace", "message": "workspace_dir: an existing absolute folder, or empty for the default."}
+            if v and os.path.realpath(v).strip("/").split("/")[0] in ("",) + SYSTEM_DIRS:
+                return 400, {"error": "bad_workspace", "message": "workspace_dir: not the system root nor a system folder."}
             cfg["workspace_dir"] = v
         for k in FLAGS:
             if k in body:
