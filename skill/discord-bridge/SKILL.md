@@ -1,6 +1,6 @@
 ---
 name: discord-bridge
-description: Set up, check or fix the Harness Discord bridge (talk to Harness sessions from a Discord server). Use when the user mentions the Discord bot, its channels, or it does not answer.
+description: Set up, check or fix the Harness Discord bridge. Use when the Discord bot or its channels are mentioned, or it does not answer.
 ---
 
 # Harness Discord bridge
