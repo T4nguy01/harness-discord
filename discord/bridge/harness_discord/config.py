@@ -47,6 +47,7 @@ DEFAULTS = {
     "relay_agents": True,    # post the results of agents (one thread per agent)
     "relay_bell": True,      # ring in the thread when a turn started elsewhere (web UI) ends in a session with its bell on
     "mirror_web_sessions": False,  # (off by default: too many threads) a thread for every recent session opened in the web UI (renamed / archived with it)
+    "project_channels": True,   # a text channel per Harness project (a thread per session); off = only #alerts, #agents… and DMs
     "reactions": True,       # status reactions on your message: hourglass while Claude works, then check mark / cross
     "answer_buttons": True,  # Stop / Regenerate buttons under the final answer of a turn
     "dashboard": True,       # a pinned dashboard message in the alerts channel

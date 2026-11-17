@@ -50,6 +50,14 @@ def test_first_run_builds_everything_private_and_archives_old_channels():
     assert set(lay["projects"]) == {"dev", "home-assistant"}
 
 
+def test_without_project_channels_only_the_system_ones_exist():
+    r = R(OLD)
+    lay = asyncio.run(layout.ensure(r, {}, "G", "OWNER", "BOT", [{"name": "dev"}], "fr", project_channels=False))
+    names = [c[0] for c in r.created]
+    assert "Projets" not in names and "dev" not in names and "alertes" in names and "agents" in names
+    assert lay["projects"] == {}
+
+
 def test_second_run_creates_nothing_and_new_project_gets_a_channel():
     r = R(OLD)
     lay = asyncio.run(layout.ensure(r, {}, "G", "OWNER", "BOT", [{"name": "dev"}], "fr"))

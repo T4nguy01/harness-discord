@@ -123,7 +123,7 @@ class Bot(CommandsMixin, FollowMixin):
         projects = [{"name": p["name"], "emoji": p.get("emoji") or ""} for p in await self.h.tree()]
         self.emojis.update({p["name"]: p["emoji"] for p in projects})
         await layout.ensure(self.rest, self.lay, guild, self.owner, self.gw.user_id, projects, self.lang,
-                            state_lost=self.store.damaged)
+                            state_lost=self.store.damaged, project_channels=self.cfg.get("project_channels", True))
         self.store.damaged = False
         await layout.slow_alerts(self.rest, self.lay)
         self.store.save()

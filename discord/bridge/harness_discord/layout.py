@@ -117,7 +117,7 @@ class _Ensure:
 
 
 async def ensure(rest: Rest, lay: dict, guild: str, owner: str, bot: str, projects: list[dict], lang: str,
-                 archive_old: bool = True, state_lost: bool = False) -> dict:
+                 archive_old: bool = True, state_lost: bool = False, project_channels: bool = True) -> dict:
     """Create what is missing (idempotent). `lay` is the stored layout; returns the updated one.
 
     `state_lost`: the stored state was unreadable; never archive anything in that case."""
@@ -128,11 +128,11 @@ async def ensure(rest: Rest, lay: dict, guild: str, owner: str, bot: str, projec
     e = _Ensure(rest, lay, guild, owner, bot, chans)
     old = [c["id"] for c in chans.values() if c["type"] == TEXT] if first_run else []       # what existed before us
     system = await e.cat("cat_system", n["cat_system"], e.overwrites())
-    projs = await e.cat("cat_projects", n["cat_projects"], e.overwrites())
+    projs = await e.cat("cat_projects", n["cat_projects"], e.overwrites()) if project_channels else ""
     for k in ("alerts", "notifications", "crons", "agents"):
         lay[k] = await e.text(k, n[k], system, n["t_" + k])
     lay.setdefault("projects", {})
-    for p in projects:
+    for p in (projects if project_channels else []):
         pid = lay["projects"].get(p["name"])
         if pid and pid in chans:
             continue
