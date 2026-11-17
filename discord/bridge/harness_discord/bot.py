@@ -309,7 +309,7 @@ class Bot(CommandsMixin, FollowMixin):
                 self.store.link(sid, out, path, parent=p.parent or p.channel)
             else:
                 try:
-                    th = await self.rest.start_thread(p.channel, self.thread_name(path, s.get("title") or self.t("working")), p.message or None)
+                    th = await self.rest.start_thread(p.channel, self.thread_name(path, s.get("title") or self.t("working"), p.channel), p.message or None)
                 except DiscordError as e:                 # the session exists in Harness: answer in the channel, tell the user
                     log.warning("thread for session %s: %s", sid, e)
                     ok = False
@@ -327,11 +327,16 @@ class Bot(CommandsMixin, FollowMixin):
             await self.rest.send(out, self.t("started", path=path.split("projects/", 1)[-1].replace("/topics/", "/")))
         return ok
 
-    def thread_name(self, path: str, title: str) -> str:
-        """`<project emoji> topic · title` (no emoji when the project has none)."""
+    def thread_name(self, path: str, title: str, parent: str = "") -> str:
+        """`topic · title` inside the project's own channel (the channel already says the project);
+        `<emoji> project/topic · title` in any other channel (#general, #agents…), where the project is not obvious."""
         project = path.split("/")[1] if path.startswith("projects/") else ""
+        topic = path.split("/topics/", 1)[-1]
+        if parent and project and self.lay.get("projects", {}).get(project) == parent:
+            return f"{topic} · {title}"[:100]
         emoji = self.emojis.get(project, "")
-        return f"{emoji + ' ' if emoji else ''}{path.split('/topics/', 1)[-1]} · {title}"[:100]
+        label = f"{project}/{topic}" if project and "/" not in topic else topic
+        return f"{emoji + ' ' if emoji else ''}{label} · {title}"[:100]
 
     def incoming(self, m: dict) -> tuple[str, list[dict]]:
         """Text and attachments of a Discord message, forwarded messages (snapshots) included, marked [Forwarded]."""

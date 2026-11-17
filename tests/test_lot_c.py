@@ -40,7 +40,8 @@ async def test_mirror_creates_threads_for_recent_web_sessions(e):
     assert [t["name"] for t in e.fd.threads] == ["blog · Article"] and e.fd.threads[0]["parent"] == PROJECT_CH
     assert e.bot.store.session_of_channel("T1") == "W1"
     hello = e.fd.in_channel("T1")[0]
-    assert "Article" in hello["content"] and "http://web/sessions/W1" in hello["content"]
+    assert hello["embeds"][0]["title"] == "Article"
+    assert hello["components"][0]["components"][0]["url"] == "http://web/sessions/W1"
     await e.bot.mirror.sync()
     assert len(e.fd.threads) == 1                                  # not twice
 
@@ -107,16 +108,17 @@ async def test_message_in_a_mirrored_thread_continues_the_session(e):
 # === 2. emoji in thread names ========================================================================================
 
 @scenario
-async def test_thread_name_carries_the_project_emoji(e):
+async def test_thread_name_outside_the_project_channel_carries_the_emoji(e):
     e.fh.projects[0]["emoji"] = "🛒"
     await e.bot.topics()
-    assert e.bot.thread_name(TOPIC, "Titre") == "🛒 blog · Titre"
+    assert e.bot.thread_name(TOPIC, "Titre") == "🛒 dev/blog · Titre"
+    assert e.bot.thread_name(TOPIC, "Titre", PROJECT_CH) == "blog · Titre"
     web(e, "W1", "Article")
     await e.bot.mirror.sync()
-    assert e.fd.threads[0]["name"] == "🛒 blog · Article"
+    assert e.fd.threads[0]["name"] == "blog · Article"
     e.fh.projects[0]["emoji"] = ""
     await e.bot.topics()
-    assert e.bot.thread_name(TOPIC, "Titre") == "blog · Titre"
+    assert e.bot.thread_name(TOPIC, "Titre") == "dev/blog · Titre"
     assert len(e.bot.thread_name(TOPIC, "x" * 200)) == 100
 
 

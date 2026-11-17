@@ -338,9 +338,9 @@ class FollowMixin:
             return
         if s.get("title"):
             try:
-                await self.rest.rename(link["channel"], self.thread_name(link["path"], s["title"]))
+                await self.rest.rename(link["channel"], self.thread_name(link["path"], s["title"], link.get("parent", "")))
             except DiscordError:
                 return
             link["titled"] = True
-            link["name"] = self.thread_name(link["path"], s["title"])
+            link["name"] = self.thread_name(link["path"], s["title"], link.get("parent", ""))
             self.store.save()

@@ -375,7 +375,7 @@ class CommandsMixin(ToolsMixin):
             if not parent:
                 return await say(self.err("no channel for this project"))
             try:
-                th = (await self.rest.start_thread(parent, self.thread_name(s["path"], s.get("title") or "…")))["id"]
+                th = (await self.rest.start_thread(parent, self.thread_name(s["path"], s.get("title") or "…", parent)))["id"]
             except DiscordError as e:
                 log.warning("thread for session %s: %s", sid, e)
                 return await say(self.t("start_failed"))

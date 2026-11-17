@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from . import fmt, views
 from .discord_api import DiscordError
 from .harness import HarnessError
 
@@ -83,7 +84,7 @@ class Mirror:
                 await b.rest.modify_channel(ch, archived=False)
                 link.pop("archived", None)
             if link.get("mirror") and s.get("title"):
-                name = b.thread_name(link["path"], s["title"])
+                name = b.thread_name(link["path"], s["title"], link.get("parent", ""))
                 if name != link.get("name"):
                     await b.rest.rename(ch, name)
                     link["name"] = name
@@ -103,13 +104,18 @@ class Mirror:
         if not parent:
             return False
         title = s.get("title") or "…"
-        name = b.thread_name(path, title)
+        name = b.thread_name(path, title, parent)
         try:
             th = (await b.rest.start_thread(parent, name))["id"]
             b.store.link(s["id"], th, path, parent=parent)
             link = b.store.link_of(s["id"])
             link.update({"mirror": True, "name": name, "titled": bool(s.get("title"))})
-            await b.rest.send(th, b.t("mirror_hello", title=title, url=f"{b.web_url}/sessions/{s['id']}"), silent=True)
+            url = f"{b.web_url}/sessions/{s['id']}"
+            embed = {"title": fmt.clip(title, 250), "description": b.t("mirror_hello"), "color": views.BLUE,
+                     "fields": [{"name": b.t("mirror_topic"), "value": f"`{path.split('/topics/', 1)[-1]}`", "inline": True},
+                                {"name": b.t("mirror_project"), "value": f"`{project}`", "inline": True}]}
+            button = [{"type": 1, "components": [{"type": 2, "style": 5, "label": "🌐 " + b.t("open_session"), "url": url}]}]
+            await b.rest.send(th, embeds=[embed], components=button, silent=True)
         except DiscordError as e:
             log.warning("mirror thread for %s: %s", s.get("id"), e)
             return False
