@@ -59,6 +59,7 @@ class Pending:
     message: str                       # id of the user's message ("" for /new)
     in_dm: bool
     thread: str = ""                   # a thread made by hand: it becomes the session's thread
+    parent: str = ""                   # project channel that holds that thread
     title: str = ""
     project: str = ""                 # restricts the topic menu to that project
     at: float = field(default_factory=time.time)
@@ -181,6 +182,10 @@ class CommandsMixin(ToolsMixin):
                 if self.store.channel_of(sid):
                     c = self.store.channel_of(sid)
                     self.store.unlink(sid)
+                    f = self.followers.get(sid)
+                    if f:
+                        f.expect = 0                                 # nothing more to post in a closed thread
+                    self.answer_msg.pop(sid, None)
                     await reply(self.t("closed"))
                     return await self.rest.close_thread(c)                 # locked and archived, still readable
                 if self.store.data.get("dm_current") == sid:
@@ -251,6 +256,8 @@ class CommandsMixin(ToolsMixin):
         if topic:                                                 # typed something that is not one topic: list the matches
             low = " ".join(topic.split()).lower()
             topics = [x for x in topics if low in f"{x['project']}/{x['name']}".lower()] or topics
+        if not topics:
+            return await self.rest.edit_original(i, app, self.t("no_topic"))
         self.pending[pid] = Pending(text=text, files=[], channel=ch, message="", in_dm=in_dm, title=title, project=project)
         await self.rest.edit_original(i, app, self.where(topics, len(topics) > MENU_MAX),
                                       components=self.menu(pid, topics, projects=len(topics) > MENU_MAX))
@@ -309,11 +316,13 @@ class CommandsMixin(ToolsMixin):
         text, files = self.incoming(m)
         if not text and not files:
             return await self.rest.respond(i, 4, self.t("ctx_empty"), ephemeral=True)
+        mark3 = self.third_party(m) if text else ""
+        text = mark3 + text
         sid = self.store.session_of_channel(ch)
         if not sid and not self.allowed_here(ch, in_dm):
             return await self.rest.respond(i, 4, self.t("refused_here"), ephemeral=True)
         await self.rest.respond(i, 5, ephemeral=True)
-        m = {**m, "channel_id": ch}
+        m = {**m, "channel_id": ch, "content": mark3 + (m.get("content") or "")}
         try:
             if sid and name in CTX_SEND:
                 await self.forward(sid, m, ch)

@@ -787,7 +787,7 @@ def test_all_confirm_buttons_use_short_validated_ids():
     from harness_discord.tools import CF, CONFIRM_ACTIONS
     assert CF.fullmatch("cf:y:0123abcd") and not CF.fullmatch("cf:y:0123ABCD") and not CF.fullmatch("cf:y:0123abcde")
     for action in CONFIRM_ACTIONS:
-        assert action in {"cron_run", "cron_toggle", "agent_run", "backup_run", "queue_clear", "mail_seen", "mail_archive", "outbox_send", "outbox_deny"}
+        assert action in {"cron_run", "cron_toggle", "agent_run", "backup_run", "queue_clear", "mail_seen", "mail_archive", "outbox_send", "outbox_deny", "feed_act"}
 
 
 @scenario

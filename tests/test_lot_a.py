@@ -59,9 +59,9 @@ def test_malformed_event_is_skipped_and_feed_last_advances(tmp_path):
         bot.h = Feed(events)
         r = Relay(bot)
         await r.feed()
-        events += [ev(2, count="x"), ev(3, "shop")]               # the first one cannot be rendered
+        events += [ev(2, count="x", title=None), ev(3, "shop")]   # odd values are rendered with defaults, never lost
         await r.feed()
-        assert r.st["feed_last"] == 3 and len(bot.rest.sent) == 1 and "T3" in bot.rest.sent[0]["embeds"][0]["title"]
+        assert r.st["feed_last"] == 3 and len(bot.rest.sent) == 2 and "T3" in bot.rest.sent[1]["embeds"][0]["title"]
     run(go())
 
 

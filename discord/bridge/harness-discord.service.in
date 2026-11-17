@@ -18,6 +18,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
+# Nothing here needs the SSH or GPG keys of root ("-": ignored when the folder does not exist).
+InaccessiblePaths=-/root/.ssh -/root/.gnupg
 # The only folder the bridge writes (config, state, status). The virtualenv is read-only at run time.
 # install.sh creates it first: a missing path would stop the unit from starting.
 ReadWritePaths=@STATE@

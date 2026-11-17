@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -129,38 +130,50 @@ class FollowMixin:
             while f.expect > 0:
                 try:
                     it = self.h.stream(f.sid, f.offset).__aiter__()
-                    while f.expect > 0:
-                        try:
-                            kind, data = await asyncio.wait_for(it.__anext__(), 20)
-                        except asyncio.TimeoutError:
-                            f.last_ok = time.time()          # connected, just quiet
-                            if f.state == "idle" and time.time() - f.active_at > 45:
-                                f.expect = 0              # nothing more is coming for the messages we counted
-                            continue
-                        except StopAsyncIteration:
-                            await asyncio.sleep(1)           # the stream closed: do not spin while reconnecting
-                            if time.time() - f.last_ok > FOLLOW_GIVE_UP:
-                                f.expect = 0
-                            break
-                        f.active_at = f.last_ok = time.time()
-                        f.fails = 0
-                        if kind == "state":
-                            f.state = data.get("state", "")
-                        elif kind == "reset":
-                            f.offset = await self.h.tail(f.sid)
-                            break
-                        elif kind == "events":
-                            f.offset = data.get("next", f.offset)
-                            for ev in data.get("events", []):
-                                await self._event(f, ev)
-                            self.persist(f)
+                    nxt: asyncio.Future | None = None        # the read in progress: kept across quiet periods, never cancelled by them
+                    try:
+                        while f.expect > 0:
+                            if nxt is None:
+                                nxt = asyncio.ensure_future(it.__anext__())
+                            done, _ = await asyncio.wait({nxt}, timeout=20)
+                            if not done:
+                                f.last_ok = time.time()          # connected, just quiet
+                                if f.state == "idle" and time.time() - f.active_at > 45:
+                                    f.expect = 0              # nothing more is coming for the messages we counted
+                                continue
+                            got, nxt = nxt, None
+                            try:
+                                kind, data = got.result()
+                            except StopAsyncIteration:
+                                await asyncio.sleep(1)           # the stream closed: do not spin while reconnecting
+                                if time.time() - f.last_ok > FOLLOW_GIVE_UP:
+                                    f.expect = 0
+                                break
+                            f.active_at = f.last_ok = time.time()
+                            f.fails = 0
+                            if kind == "state":
+                                f.state = data.get("state", "")
+                            elif kind == "reset":
+                                f.offset = await self.h.tail(f.sid)
+                                break
+                            elif kind == "events":
+                                f.offset = data.get("next", f.offset)
+                                for ev in data.get("events", []):
+                                    await self._event(f, ev)
+                                self.persist(f)
+                    finally:
+                        if nxt is not None:
+                            nxt.cancel()
+                            await asyncio.gather(nxt, return_exceptions=True)
                     await it.aclose()
                 except HERR as e:
                     if self._failed(f, e):
                         f.expect = 0
                         break
                     await asyncio.sleep(3)
-            await self.clear_marks(f)
+            marks, f.marks = f.marks, []
+            self._release(f)                               # first: a message arriving now starts a new follower
+            await self.clear_marks(f, marks)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -168,16 +181,22 @@ class FollowMixin:
         finally:
             if f.typing:
                 f.typing.cancel()
-            self.followers.pop(f.sid, None)
-            self.persist(None, sid=f.sid)
+            self._release(f)
             now = time.time()
             self.follow_end[f.sid] = now
             for k in [k for k, t in self.follow_end.items() if now - t > 3600]:     # the bell only looks at recent ends
                 del self.follow_end[k]
 
-    async def clear_marks(self, f: Follower) -> None:
+    def _release(self, f: Follower) -> None:
+        """Forget `f`, unless a newer follower of the same session took its place."""
+        if self.followers.get(f.sid) is f:
+            del self.followers[f.sid]
+            self.persist(None, sid=f.sid)
+
+    async def clear_marks(self, f: Follower, marks: list | None = None) -> None:
         """The follower ends (stop, give-up) with messages still marked as waiting: take the hourglass off."""
-        marks, f.marks = f.marks, []
+        if marks is None:
+            marks, f.marks = f.marks, []
         for mark in marks:
             try:
                 await self.react_state(mark, "⏳", "")
@@ -254,6 +273,8 @@ class FollowMixin:
     async def finish(self, f: Follower, ev: dict) -> None:
         try:
             await self._finish(f, ev)
+        except DiscordError as e:
+            log.warning("answer of %s not sent: %s", f.sid, e)
         finally:                                               # even if Discord failed, this turn is over
             f.cur, f.steps = [], 0
             f.expect = max(0, f.expect - 1)
@@ -281,10 +302,26 @@ class FollowMixin:
         parts = fmt.chunk(text)
         for n, part in enumerate(parts):
             comps = self.answer_buttons(f.sid, f.expect > 1) if n == len(parts) - 1 else None
-            sent = await self.rest.send(f.channel, part, components=comps)
+            sent = await self.send_retry(f.channel, part, comps)
+            if sent is None:                                   # the answer stays in the web UI
+                with contextlib.suppress(DiscordError):
+                    await self.rest.send(f.channel, "⚠ " + self.t("not_sent"))
+                return
             self.remember(sent["id"], f.sid)
             if comps:
                 self.answer_msg[f.sid] = (f.channel, sent["id"])
+
+    async def send_retry(self, channel: str, text: str, comps: list | None = None, tries: int = 3) -> dict | None:
+        """A part of an answer, sent again after a transient Discord failure. None when it never went through."""
+        for n in range(tries):
+            try:
+                return await self.rest.send(channel, text, components=comps)
+            except DiscordError as e:
+                log.warning("send to %s failed (%d/%d): %s", channel, n + 1, tries, e)
+                if not e.transient:
+                    break
+                await asyncio.sleep(2 * (n + 1))
+        return None
 
     def remember(self, mid: str, sid: str) -> None:
         self.msg_session[mid] = sid
@@ -305,4 +342,5 @@ class FollowMixin:
             except DiscordError:
                 return
             link["titled"] = True
+            link["name"] = self.thread_name(link["path"], s["title"])
             self.store.save()

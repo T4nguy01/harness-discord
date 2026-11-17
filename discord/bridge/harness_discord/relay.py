@@ -19,7 +19,7 @@ from .dashboard import Dashboard, web_link
 from .approvals import RID, Approvals
 from .notifier import Notifier
 from .discord_api import DiscordError
-from .harness import HarnessError
+from .harness import HarnessError, seg
 
 log = logging.getLogger("harness_discord.relay")
 
@@ -49,16 +49,17 @@ DONE_COLOR = 0x95A5A6
 def render(e: dict, web_url: str) -> tuple[dict, list[dict]]:
     """A feed event as a Discord embed (colour = level) plus its action buttons."""
     done = bool(e.get("resolved"))
-    embed: dict = {"title": f"{LEVEL.get(e.get('level'), 'ℹ️')} {fmt.clip(e.get('title', ''), 240)}",
+    embed: dict = {"title": f"{LEVEL.get(e.get('level'), 'ℹ️')} {fmt.clip(str(e.get('title') or ''), 240)}",
                    "color": DONE_COLOR if done else COLOR.get(e.get("level"), COLOR["info"])}
     body = (e.get("body") or "").strip()
     if body:
         embed["description"] = fmt.clip_block(body, 3500)
     if done:
         embed["fields"] = [{"name": "✓", "value": fmt.clip(e.get("resolution") or "✓", 500)}]
-    foot = (e.get("agent") or e.get("source") or "").split("/")[-1]
-    if e.get("count", 1) > 1:
-        foot += f" · ×{e['count']}"
+    foot = str(e.get("agent") or e.get("source") or "").split("/")[-1]
+    count = e.get("count")
+    if isinstance(count, int) and count > 1:
+        foot += f" · ×{count}"
     if foot.strip(" ·"):
         embed["footer"] = {"text": foot[:200]}
     if isinstance(e.get("at"), (int, float)) and e["at"] > 1e9:
@@ -92,8 +93,9 @@ def agent_embed(part: str, ok: bool, agent: str, n: int, total: int, m: dict) ->
     foot = []
     if total > 1:
         foot.append(f"{n + 1}/{total}")
-    if n == total - 1 and m.get("cost"):
-        foot.append(f"{m['cost']:.2f} $")
+    cost = m.get("cost")
+    if n == total - 1 and isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost > 0:
+        foot.append(f"{cost:.2f} $")
     if foot:
         embed["footer"] = {"text": " · ".join(foot)}
     if n == total - 1 and isinstance(m.get("at"), (int, float)) and m["at"] > 1e9:
@@ -105,7 +107,7 @@ class Relay:
     def __init__(self, bot: Any):
         self.bot = bot
         self.n = 0
-        self.tries: dict[int, int] = {}
+        self.tries: dict[Any, int] = {}
         self.bell = Bell(bot)
         self.dashboard = Dashboard(bot, self)
         self.notifier = Notifier(bot)
@@ -258,8 +260,9 @@ class Relay:
                         embed["color"] = DONE_COLOR
                         embed["fields"] = [{"name": "✓", "value": self.bot.t("seen")}]
                     await self.bot.rest.edit(info["channel"], info["message"], embeds=[embed], components=[])
-                except DiscordError:
-                    pass
+                except DiscordError as err:
+                    if err.transient:
+                        continue                                    # tried again on the next tick: the button must not stay on a closed alert
                 except Exception:  # noqa: BLE001
                     log.exception("feed edit %s", eid)
                 info["done"] = True
@@ -302,7 +305,7 @@ class Relay:
         st = self.st["agents"]
         path = a["path"]
         p, t, name = a["project"], a["topic"], a["name"]
-        th = await self.bot.h.request("GET", f"/api/agents/{p}/{t}/{name}/thread", params={"limit": 10})
+        th = await self.bot.h.request("GET", f"/api/agents/{seg(p)}/{seg(t)}/{seg(name)}/thread", params={"limit": 10})
         msgs = [m for m in th.get("messages", []) if m.get("kind") == "result"]
         info = st.setdefault(path, {"seen": max([m["at"] for m in th.get("messages", [])], default=time.time()), "thread": ""})
         fresh = [m for m in msgs if m["at"] > info["seen"]]
@@ -322,13 +325,28 @@ class Relay:
             parts = parts[:MAX_PARTS]
             if cut:
                 parts[-1] = parts[-1] + "\n\n" + self.bot.t("truncated")
+            first = info.get("part", 0) if info.get("part_at") == m["at"] else 0       # parts already posted by an earlier try
             for n, part in enumerate(parts):
+                if n < first:
+                    continue
                 embed = agent_embed(part, ok, a.get("display_name") or name, n, len(parts), m)
                 link = web_link(self.bot) if n == len(parts) - 1 else None            # "Open in Harness" under the last part
-                sent = await self.bot.rest.send(info["thread"], "", embeds=[embed], silent=False, components=link)
+                try:
+                    sent = await self.bot.rest.send(info["thread"], "", embeds=[embed], silent=False, components=link)
+                except DiscordError as err:
+                    tries = self.tries[("agent", path, m["at"])] = self.tries.get(("agent", path, m["at"]), 0) + 1
+                    gone = err.status == 404 or (isinstance(err.body, dict) and err.body.get("code") == 10003)
+                    if gone or (err.transient and tries < MAX_TRIES):
+                        raise                                       # thread gone: agents() makes a new one; else the next tick resumes at this part
+                    log.warning("agent %s: result skipped after %d tries: %s", path, tries, err)
+                    break
                 self.bot.remember(sent["id"], "agent:" + path)
+                info["part"], info["part_at"] = n + 1, m["at"]
                 self.st["last_post"] = time.time()
+            self.tries.pop(("agent", path, m["at"]), None)
             info["seen"] = m["at"]
+            info.pop("part", None)
+            info.pop("part_at", None)
             self.bot.store.save()                                 # posted: never again after a restart
 
     def agent_of_thread(self, channel: str) -> str:
@@ -338,6 +356,7 @@ class Relay:
         return ""
 
     async def run_agent(self, path: str, text: str, reply_ref: str = "") -> None:
-        _, p, _, t, _, name = path.split("/")
-        body: dict = {"text": text}
-        await self.bot.h.request("POST", f"/api/agents/{p}/{t}/{name}/run", json=body)
+        parts = path.split("/")
+        if len(parts) != 6:
+            raise HarnessError(400, "bad_agent")
+        await self.bot.h.run_agent_path(parts[1], parts[3], parts[5], text)

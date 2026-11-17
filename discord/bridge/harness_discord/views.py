@@ -6,7 +6,7 @@ import re
 import time
 from typing import Any, Callable
 
-from .fmt import clip
+from .fmt import clip, cut_lines
 
 T_ = Callable[..., str]
 TID = re.compile(r"[\w-]{1,40}", re.ASCII)
@@ -73,7 +73,7 @@ def tasks_view(t: T_, data: dict, f: str, today: str) -> tuple[dict, list[dict]]
         rows.append({"type": 1, "components": btns})
     desc = "\n".join(lines) or t("tk_none")
     more = len(items) - len(lines)
-    embed = {"title": "📋 " + t("tk_title_" + next(k for k, v in FILTER_OF.items() if v == f)), "description": desc[:4000], "color": BLUE}
+    embed = {"title": "📋 " + t("tk_title_" + next(k for k, v in FILTER_OF.items() if v == f)), "description": cut_lines(desc, 4000), "color": BLUE}
     if more > 0:
         embed["footer"] = {"text": t("tk_more", n=more)}
     return embed, rows
@@ -99,7 +99,7 @@ def crons_embed(t: T_, jobs: list[dict]) -> dict:
         if last:
             bits.append(t("cr_last") + " " + when(last.get("at")))
         lines.append(" · ".join(b for b in bits if b))
-    return {"title": "⏰ " + t("cr_title"), "description": ("\n".join(lines) or t("cr_none"))[:4000], "color": BLUE}
+    return {"title": "⏰ " + t("cr_title"), "description": cut_lines("\n".join(lines) or t("cr_none"), 4000), "color": BLUE}
 
 
 # --- usage -----------------------------------------------------------------------------------------------------------
@@ -176,7 +176,7 @@ def health_view(t: T_, h: dict, services: Any, version: dict | None) -> tuple[di
     if version and version.get("version"):
         behind = version.get("behind") or 0
         fields.append({"name": t("hl_version"), "value": str(version["version"]) + (" · " + t("hl_behind", n=behind) if behind else " · " + t("hl_current")), "inline": False})
-    embed = {"title": "🩺 " + t("hl_title"), "description": ("\n".join(lines) or t("hl_ok"))[:4000], "color": color, "fields": fields}
+    embed = {"title": "🩺 " + t("hl_title"), "description": cut_lines("\n".join(lines) or t("hl_ok"), 4000), "color": color, "fields": fields}
     rows = []
     for i in open_issues[:5]:
         iid = str(i.get("id") or "")
@@ -220,7 +220,7 @@ def infra_view(t: T_, v: dict) -> tuple[dict, list[dict]]:
              + (f" · {clip(str(r['location']), 30)}" if r.get("location") else "") + (f" · {clip(str(r['status_detail']), 40)}" if r.get("status_detail") else "")
              for r in res[:30]]
     desc = "\n".join(lines) or t("if_empty")
-    embed = {"title": "🏗️ Infra", "description": desc[:4000], "color": RED if counts["down"] else ORANGE if counts["warn"] else GREEN,
+    embed = {"title": "🏗️ Infra", "description": cut_lines(desc, 4000), "color": RED if counts["down"] else ORANGE if counts["warn"] else GREEN,
              "fields": [{"name": t("if_counts"), "value": f"🟢 {counts['ok']} · 🟠 {counts['warn']} · 🔴 {counts['down']}", "inline": False}]}
     if len(res) > 30:
         embed["footer"] = {"text": t("tk_more", n=len(res) - 30)}
@@ -238,8 +238,10 @@ def queue_view(t: T_, s: dict) -> tuple[dict, list[dict]]:
     n = int(s.get("queue") or 0)
     lines = [f"{k}. {clip(str(x.get('text') or '…'), 150) or '…'}" + (f" 📎{x['attachments']}" if x.get("attachments") else "") + f" · {x.get('source', 'web')}"
              for k, x in enumerate(items, 1)]
+    if len(lines) > 10:
+        lines = lines[:10] + [f"… +{len(lines) - 10}"]
     embed = {"title": "🧾 " + t("qu_title", title=clip(str(s.get("title") or "…"), 60)), "color": BLUE,
-             "description": ("\n".join(lines) or t("qu_empty")) if n else t("qu_empty")}
+             "description": cut_lines("\n".join(lines) or t("qu_empty"), 4000) if n else t("qu_empty")}
     rows = [{"type": 1, "components": [{"type": 2, "style": 4, "label": t("qu_clear", n=n), "custom_id": "qc:" + str(s.get("id"))[:64]}]}] if n else []
     return embed, rows
 

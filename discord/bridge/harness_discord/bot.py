@@ -49,6 +49,9 @@ class Bot(CommandsMixin, FollowMixin):
         self.lay: dict = store.data.setdefault("layout", {})
         self.locks: dict[str, asyncio.Lock] = {}                    # one per session: messages go to Harness in order
         self.sync_task: asyncio.Task | None = None
+        self.sync_lock = asyncio.Lock()                             # one layout sync at a time (start, timer, page button)
+        self.picking: set[str] = set()                              # topic menus being answered: a second click is ignored
+        self.regen: set[str] = set()                                # sessions with a Regenerate in progress
         self.relay = Relay(self)
         self.relay_task: asyncio.Task | None = None
         self.approvals_task: asyncio.Task | None = None
@@ -107,6 +110,12 @@ class Bot(CommandsMixin, FollowMixin):
                 log.exception("layout sync")
 
     async def sync_layout(self) -> None:
+        async with self.sync_lock:
+            await self._sync_layout()
+            for k in [k for k, lk in self.locks.items() if not lk.locked()]:      # idle per-session locks
+                del self.locks[k]
+
+    async def _sync_layout(self) -> None:
         guild = await layout.pick_guild(self.rest, self.cfg.get("guild_id", ""))
         if not guild:
             log.warning("the bot is in several servers: set guild_id in config.json")
@@ -162,7 +171,7 @@ class Bot(CommandsMixin, FollowMixin):
             rows.append({"type": 1, "components": [{"type": 3, "custom_id": f"pick:{pid}", "placeholder": self.t("pick_project_ph"), "options": opts}]})
         else:
             opts = []
-            for x in topics[:25]:
+            for x in [x for x in topics if len(x["path"]) <= 100][:25]:        # a select value holds 100 characters
                 o = {"label": f"{x['project']}/{x['name']}"[:100], "value": x["path"][:100]}
                 if x["desc"]:
                     o["description"] = fmt.clip(x["desc"], 100)
@@ -217,14 +226,16 @@ class Bot(CommandsMixin, FollowMixin):
         pid = secrets.token_hex(4)
         self.purge()
         project = self.project_of(channel)
+        parent = ""
         if thread:
             try:
-                project = self.project_of((await self.rest.channel(thread)).get("parent_id", ""))
+                parent = (await self.rest.channel(thread)).get("parent_id", "")
+                project = self.project_of(parent)
             except DiscordError:
                 pass
         text, files = self.incoming(m)
         p = self.pending[pid] = Pending(text=text, files=files, channel=channel,
-                                        message=m["id"], in_dm=in_dm, thread=thread, project=project)
+                                        message=m["id"], in_dm=in_dm, thread=thread, parent=parent, project=project)
         only = [x for x in await self.topics() if x["project"] == project] if project else []
         if len(only) == 1:                                      # one topic in that project: no question
             del self.pending[pid]
@@ -240,6 +251,9 @@ class Bot(CommandsMixin, FollowMixin):
                 cont = (await self.h.session(self.store.data["dm_current"]))["title"] or "…"
             except HERR:
                 cont = ""
+        if not topics:
+            self.pending.pop(pid, None)
+            return await self.rest.send(channel, self.t("no_topic"), reply_to=reply_to)
         comps = self.menu(pid, topics, projects=len(topics) > 25, cont=cont)
         await self.rest.send(channel, self.where(topics, len(topics) > 25), components=comps, reply_to=reply_to)
 
@@ -292,7 +306,7 @@ class Bot(CommandsMixin, FollowMixin):
         if not p.in_dm:
             if p.thread:
                 out = p.thread
-                self.store.link(sid, out, path, parent=p.channel)
+                self.store.link(sid, out, path, parent=p.parent or p.channel)
             else:
                 try:
                     th = await self.rest.start_thread(p.channel, self.thread_name(path, s.get("title") or self.t("working")), p.message or None)
@@ -334,6 +348,14 @@ class Bot(CommandsMixin, FollowMixin):
             files += list(inner.get("attachments") or [])
         return text, files
 
+    def third_party(self, m: dict) -> str:
+        """A line marking a message written by someone else as data (empty for the owner's own messages)."""
+        a = m.get("author") or {}
+        if str(a.get("id", "")) == self.owner:
+            return ""
+        name = " ".join(str(a.get("global_name") or a.get("username") or "?").split())[:40]
+        return self.t("third_party", name=name) + "\n"
+
     def note_forwarded(self, mid: str, channel: str) -> None:
         if not mid:
             return
@@ -365,7 +387,7 @@ class Bot(CommandsMixin, FollowMixin):
             files, voice = await self.ingest(s["path"], atts, channel)
             ref = m.get("referenced_message")
             if ref and ref.get("content") and not (ref.get("author") or {}).get("bot"):
-                text = f"> {fmt.clip(ref['content'], 400)}\n\n{text}"
+                text = f"{self.third_party(ref)}> {fmt.clip(ref['content'], 400)}\n\n{text}"
             if not text and not files and not voice:
                 return await self.react_state(mark, "⏳", "")
             await self.h.send(sid, text or ("(voice)" if voice else "(file)"), attachments=files, voice=voice)
@@ -394,6 +416,24 @@ class Bot(CommandsMixin, FollowMixin):
             await self.rest.react(self.forwarded[mid], mid, "✏️")
 
     async def on_interaction(self, i: dict) -> None:
+        """Every click and command goes through here: whatever fails, the user gets a short answer instead of a message
+        stuck on "thinking"."""
+        try:
+            await self._on_interaction(i)
+        except Exception:  # noqa: BLE001
+            log.exception("interaction %s", (i.get("data") or {}).get("name") or (i.get("data") or {}).get("custom_id"))
+            if i.get("type") == 4:
+                return
+            text = self.err("error")
+            try:
+                await self.rest.respond(i, 4, text, ephemeral=True)
+            except DiscordError:                                 # already acknowledged: edit the pending answer
+                try:
+                    await self.rest.followup(i, self.gw.app_id, text, ephemeral=True)
+                except DiscordError:
+                    pass
+
+    async def _on_interaction(self, i: dict) -> None:
         user = (i.get("member") or {}).get("user") or i.get("user") or {}
         if i["type"] == 4:                                     # autocomplete: choices of the owner only
             return await self.on_autocomplete(i, user.get("id") == self.owner)
@@ -422,27 +462,22 @@ class Bot(CommandsMixin, FollowMixin):
             await self.rest.respond(i, 7, "↩", components=[])
             return await self.forward_pending(sid, p)
         if kind == "pick":
-            await self.rest.respond(i, 7, "⏳", components=[])            # answer first: listing topics may take a moment
+            if pid in self.picking:
+                return await self.rest.respond(i, 6)                       # a second click while the first is handled
+            self.picking.add(pid)
             try:
-                v = i["data"]["values"][0]
-                topics = await self.topics()
-                if v.startswith("p:"):
-                    only = [x for x in topics if x["project"] == v[2:]]
-                    return await self.rest.edit_original(i, app, self.where(only), components=self.menu(pid, only))
-                if v not in {x["path"] for x in topics}:                  # only a topic that really exists
-                    return await self.rest.edit_original(i, app, self.t("expired"), components=[])
-                self.pending.pop(pid, None)
-                label = v.split("projects/", 1)[-1].replace("/topics/", "/")
-                await self.rest.edit_original(i, app, f"✅ {label}", components=[])
-            except HERR as e:
-                return await self.rest.edit_original(i, app, self.err(e), components=[])
-            return await self.start(p, v)
+                return await self._pick(i, p, pid)
+            finally:
+                self.picking.discard(pid)
         if kind == "fa":                                       # a feed alert button: Allow / Deny / Seen...
             parts = i["data"]["custom_id"].split(":", 2)
             if len(parts) != 3 or not EID.fullmatch(parts[1]):
                 return await self.rest.respond(i, 4, self.t("expired"), ephemeral=True)
             _, eid, action = parts
             await self.rest.respond(i, 6)                           # acknowledge now, the click may take a while
+            if self.button_style(i) == 4 and action not in ("seen", "open"):      # a "danger" button asks again
+                return await self.ask(i, "feed_act", {"eid": eid, "action": action, "target": f"{eid}:{action}"},
+                                      self.t("fa_ask", action=fmt.clip(action, 40)), follow=True)
             try:
                 e = await self.relay.act(int(eid), action)
             except HERR as err:
@@ -462,6 +497,34 @@ class Bot(CommandsMixin, FollowMixin):
                 return await self.rest.followup(i, app, self.t("expired"), ephemeral=True)
             say = lambda s: self.rest.followup(i, app, s, ephemeral=True)    # noqa: E731
             return await self.open_session(sid, i["channel_id"], not i.get("guild_id"), say)
+
+    async def _pick(self, i: dict, p: Pending, pid: str) -> None:
+        app = self.gw.app_id
+        await self.rest.respond(i, 7, "⏳", components=[])            # answer first: listing topics may take a moment
+        try:
+            v = i["data"]["values"][0]
+            topics = await self.topics()
+            if v.startswith("p:"):
+                only = [x for x in topics if x["project"] == v[2:]]
+                return await self.rest.edit_original(i, app, self.where(only), components=self.menu(pid, only))
+            if v not in {x["path"] for x in topics}:                  # only a topic that really exists
+                return await self.rest.edit_original(i, app, self.t("expired"), components=[])
+            self.pending.pop(pid, None)
+            label = v.split("projects/", 1)[-1].replace("/topics/", "/")
+            await self.rest.edit_original(i, app, f"✅ {label}", components=[])
+        except HERR as e:
+            return await self.rest.edit_original(i, app, self.err(e), components=[])
+        await self.start(p, v)
+
+    @staticmethod
+    def button_style(i: dict) -> int | None:
+        """Style of the button that was clicked (read from the message it sits on)."""
+        cid = i["data"].get("custom_id")
+        for row in (i.get("message") or {}).get("components") or []:
+            for c in row.get("components") or []:
+                if c.get("custom_id") == cid:
+                    return c.get("style")
+        return None
 
     async def on_answer_button(self, i: dict) -> None:
         m = AB.fullmatch(i["data"]["custom_id"])
@@ -485,9 +548,15 @@ class Bot(CommandsMixin, FollowMixin):
             text = self.last_user.get(sid, "")
             if not text:
                 return await say(self.t("regen_none"))
-            if self.answer_msg.get(sid, ("", ""))[1] == mid:
-                await self.clear_buttons(sid)
-            await self.forward(sid, {"id": "", "content": text, "attachments": []}, i["channel_id"])
+            if sid in self.regen:                                # a second click would send the prompt twice
+                return await say(self.t("regen_ok"))
+            self.regen.add(sid)
+            try:
+                if self.answer_msg.get(sid, ("", ""))[1] == mid:
+                    await self.clear_buttons(sid)
+                await self.forward(sid, {"id": "", "content": text, "attachments": []}, i["channel_id"])
+            finally:
+                self.regen.discard(sid)
             await say(self.t("regen_ok"))
         except HERR as e:
             await say(self.err(e))

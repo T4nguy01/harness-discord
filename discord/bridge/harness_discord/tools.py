@@ -36,7 +36,7 @@ MA = re.compile(r"ma:(seen|archive):([a-z0-9][a-z0-9-]{0,40}):(\d{1,12})", re.AS
 OB = re.compile(r"ob:(send|deny):([\w-]{1,40})", re.ASCII)
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)
 CONFIRM_ACTIONS = ("cron_run", "cron_toggle", "agent_run", "backup_run", "queue_clear", "mail_seen", "mail_archive",
-                   "outbox_send", "outbox_deny")
+                   "outbox_send", "outbox_deny", "feed_act")
 CTX_NEW_FORM = "nm"
 
 
@@ -110,11 +110,11 @@ class ToolsMixin:
         return str(self.cfg.get("workspace_dir") or os.environ.get("HD_WORKSPACE") or "/root/maxxing")
 
     async def show(self, i: dict, text: str = "", embeds: list | None = None, comps: list | None = None) -> None:
-        await self.rest.edit_original(i, self.gw.app_id, text, components=comps or [], embeds=embeds or [])
+        await self.rest.edit_original(i, self.gw.app_id, text, components=comps or [], embeds=[fmt.fit_embed(e) for e in embeds or []])
 
     async def say(self, i: dict, text: str = "", embeds: list | None = None, comps: list | None = None) -> None:
         """A new private message after the interaction was acknowledged."""
-        await self.rest.followup(i, self.gw.app_id, text, ephemeral=True, components=comps, embeds=embeds)
+        await self.rest.followup(i, self.gw.app_id, text, ephemeral=True, components=comps, embeds=[fmt.fit_embed(e) for e in embeds] if embeds else None)
 
     def purge_confirms(self) -> None:
         now = time.time()
@@ -287,9 +287,15 @@ class ToolsMixin:
         await self.ask(i, "agent_run", {"key": a["key"], "text": text, "target": a["key"]},
                        self.t("ag_ask", name=fmt.clip(str(a["label"]), 80), text=(": " + fmt.clip(text, 300)) if text else ""))
 
+    async def do_feed_act(self, a: dict) -> str:
+        await self.relay.act(int(a["eid"]), str(a["action"]))
+        return self.t("fa_done")
+
     async def do_agent_run(self, a: dict) -> str:
-        p, tp, n = a["key"].split("/")
-        await self.h.run_agent_path(p, tp, n, a.get("text", ""))
+        parts = str(a["key"]).split("/")
+        if len(parts) != 3:
+            raise HarnessError(400, "bad_agent")
+        await self.h.run_agent_path(*parts, a.get("text", ""))
         return self.t("ag_started", name=a["key"])
 
     # --- usage, health -----------------------------------------------------------------------------------------------
@@ -500,7 +506,7 @@ class ToolsMixin:
             return await self.say(i, self.err(e))
         frm = d.get("from") or {}
         embed = {"title": "✉️ " + fmt.clip(str(d.get("subject") or "…"), 200), "color": views.BLUE,
-                 "description": fmt.clip_block(str(d.get("text") or ""), 900) or self.t("ml_notext"),
+                 "description": fmt.clip_block(str(d.get("text") or "").replace("](", "] ("), 900) or self.t("ml_notext"),   # no hidden link targets
                  "fields": [{"name": self.t("ml_from"), "value": fmt.clip(f"{frm.get('name', '')} <{frm.get('email', '')}>", 200), "inline": True},
                             {"name": self.t("ml_date"), "value": str(d.get("date") or "–")[:40], "inline": True}]}
         if d.get("attachments"):
@@ -590,6 +596,9 @@ class ToolsMixin:
             result = "ok"
         except HERR as e:
             msg, result = self.err(e), self.short_error(e)
+        except Exception:  # noqa: BLE001                            # never leave the message on the hourglass
+            log.exception("confirmed action %s", c.action)
+            msg, result = self.err("error"), "error"
         self.done(c.action.replace("_", "."), str(c.args.get("target", "")), result)
         try:
             await self.show(i, msg)

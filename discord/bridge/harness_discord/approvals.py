@@ -59,8 +59,9 @@ def excerpt(item: dict) -> tuple[str, bool]:
             break
     else:
         text = json.dumps(inp, ensure_ascii=False, indent=1) if inp else ""
-    text = mask(text)
-    whole = not rest and len(text) <= EXCERPT and not item.get("clipped")
+    shown = mask(text)
+    whole = not rest and len(shown) <= EXCERPT and not item.get("clipped") and shown == text   # a masked part could hide what runs
+    text = shown
     return (text if len(text) <= EXCERPT else text[: EXCERPT - 1] + "…"), whole
 
 
@@ -70,6 +71,7 @@ class Approvals:
         self.deciding: set[str] = set()                 # being answered from here: the poller leaves them alone
         self.embeds: dict[str, dict] = {}               # rid -> the embed as posted (memory only: the request text is not saved)
         self.tries: dict[str, int] = {}
+        self.claimed: set[str] = set()                  # an answer is on its way from a click: a second click is stale
 
     @property
     def st(self) -> dict:
@@ -241,14 +243,20 @@ class Approvals:
                 return await b.rest.respond(i, 4, b.t("ap_no_rule"), ephemeral=True)
             return await b.rest.respond(i, 4, b.t("ap_confirm_always", rule=fmt.clip(info["rule"], 200)), ephemeral=True, components=[
                 {"type": 1, "components": [{"type": 2, "style": 4, "label": b.t("ap_confirm_btn"), "custom_id": f"ap:c:{rid}"}]}])
-        if act == "c":
-            await b.rest.respond(i, 7, "⏳", components=[])
-            msg = await self.decide(rid, "allow", who, always=True)
-            return await b.rest.edit_original(i, app, msg or "✅", components=[])
-        await b.rest.respond(i, 6)                                   # acknowledge now, the answer is edited into the message
-        msg = await self.decide(rid, "allow" if act == "y" else "deny", who)
-        if msg:
-            await b.rest.followup(i, app, msg, ephemeral=True)
+        if rid in self.claimed:
+            return await self.stale(i)
+        self.claimed.add(rid)                                        # before any await: two quick clicks give one answer
+        try:
+            if act == "c":
+                await b.rest.respond(i, 7, "⏳", components=[])
+                msg = await self.decide(rid, "allow", who, always=True)
+                return await b.rest.edit_original(i, app, msg or "✅", components=[])
+            await b.rest.respond(i, 6)                               # acknowledge now, the answer is edited into the message
+            msg = await self.decide(rid, "allow" if act == "y" else "deny", who)
+            if msg:
+                await b.rest.followup(i, app, msg, ephemeral=True)
+        finally:
+            self.claimed.discard(rid)
 
     async def on_modal(self, i: dict) -> None:
         b = self.bot
@@ -261,10 +269,16 @@ class Approvals:
             for c in row.get("components") or []:
                 if isinstance(c, dict) and c.get("custom_id") == "reason":
                     reason = " ".join(str(c.get("value") or "").split())[:500]
-        await b.rest.respond(i, 6)
-        msg = await self.decide(m[1], "deny", self.who(i), reason)
-        if msg:
-            await b.rest.followup(i, b.gw.app_id, msg, ephemeral=True)
+        if m[1] in self.claimed:
+            return await self.stale(i)
+        self.claimed.add(m[1])
+        try:
+            await b.rest.respond(i, 6)
+            msg = await self.decide(m[1], "deny", self.who(i), reason)
+            if msg:
+                await b.rest.followup(i, b.gw.app_id, msg, ephemeral=True)
+        finally:
+            self.claimed.discard(m[1])
 
     async def decide(self, rid: str, decision: str, who: str, reason: str = "", always: bool = False) -> str | None:
         """Send the answer to Harness. None when it worked, else the (short) text to show privately."""

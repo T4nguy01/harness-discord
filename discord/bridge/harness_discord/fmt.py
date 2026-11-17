@@ -47,7 +47,7 @@ def chunk(text: str, limit: int = LIMIT) -> list[str]:
     parts: list[str] = []
     fence = ""            # "```lang" while a code block is open across a cut
     while text:
-        room = limit - (len(fence) + 1 if fence else 0) - 4     # room for the reopened/closing fence
+        room = max(200, limit - (len(fence) + 1 if fence else 0) - 4)     # room for the reopened/closing fence
         if len(text) <= room:
             piece, text = text, ""
         else:
@@ -55,9 +55,9 @@ def chunk(text: str, limit: int = LIMIT) -> list[str]:
             piece, text = text[:k].rstrip("\n"), text[k:].lstrip("\n")
         if fence:
             piece = fence + "\n" + piece
-        opens = [m.group(0) for m in re.finditer(r"^```[^\n]*", piece, re.M)]
+        opens = [m.group(0) for m in re.finditer(r"^```[^\n]*", piece, re.M) if "```" not in m.group(0)[3:]]   # ```code``` on one line is closed
         if len(opens) % 2 == 1:
-            fence = opens[-1] if opens[-1] != "```" else "```"
+            fence = opens[-1][:40]
             piece += "\n```"
         else:
             fence = ""
@@ -74,3 +74,41 @@ def clip_block(s: str, n: int) -> str:
     """Keep line breaks (an alert body is a few lines), cut at n characters."""
     s = s.strip()
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def cut_lines(text: str, n: int) -> str:
+    """Cut at n characters on a whole line (no half bold mark or timestamp), with a mark that something is missing."""
+    if len(text) <= n:
+        return text
+    cut = text[: max(0, n - 2)]
+    nl = cut.rfind("\n")
+    return (cut[:nl] if nl > n // 2 else cut) + "\n…"
+
+
+def embed_size(e: dict) -> int:
+    """What Discord counts against the 6000 characters of all the embeds of a message."""
+    size = len(e.get("title") or "") + len(e.get("description") or "")
+    size += len((e.get("footer") or {}).get("text") or "") + len((e.get("author") or {}).get("name") or "")
+    for f in e.get("fields") or []:
+        size += len(f.get("name") or "") + len(f.get("value") or "")
+    return size
+
+
+def fit_embed(e: dict, limit: int = 5900) -> dict:
+    """The embed within Discord's limits (title 256, description 4096, 25 fields of 256 / 1024, 6000 in all): the
+    description is shortened first, then the last fields go. A copy; the original is not changed."""
+    e = dict(e)
+    if e.get("title"):
+        e["title"] = clip(e["title"], 256)
+    if e.get("description"):
+        e["description"] = cut_lines(e["description"], 4096)
+    fields = [dict(f, name=clip(str(f.get("name") or "–"), 256) or "–", value=cut_lines(str(f.get("value") or "–"), 1024) or "–")
+              for f in (e.get("fields") or [])[:25]]
+    if fields:
+        e["fields"] = fields
+    over = embed_size(e) - limit
+    if over > 0 and e.get("description"):
+        e["description"] = cut_lines(e["description"], max(0, len(e["description"]) - over))
+    while embed_size(e) > limit and e.get("fields"):
+        e["fields"] = e["fields"][:-1]
+    return e

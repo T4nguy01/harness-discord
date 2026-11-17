@@ -27,6 +27,19 @@ def _write(path, data):
     os.replace(tmp, path)
 
 
+def _log(d, cmd, target, result="ok"):
+    """One line in the bridge's audit file (the same format the bridge writes)."""
+    rec = {"at": int(time.time()), "cmd": cmd, "target": target, "result": result}
+    try:
+        fd = os.open(Path(d) / "audit.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, (json.dumps(rec, ensure_ascii=False) + "\n").encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
 def _audit(d, n=10):
     out = []
     for name in ("audit.jsonl.1", "audit.jsonl"):
@@ -104,6 +117,8 @@ def handle(ctx, method, path, query, body):
             v = str(body["owner_id"]).strip()
             if v and not re.fullmatch(r"\d{15,25}", v):
                 return 400, {"error": "bad_owner_id", "message": "A Discord user id is 15 to 25 digits."}
+            if v != str(cfg.get("owner_id", "")):
+                _log(d, "page.owner", f"{cfg.get('owner_id', '') or '-'} -> {v or '-'}")       # who the bot obeys changed
             cfg["owner_id"] = v
         if "guild_id" in body:
             v = str(body["guild_id"]).strip()
@@ -120,6 +135,8 @@ def handle(ctx, method, path, query, body):
                 return 400, {"error": "bad_workspace", "message": "workspace_dir: an existing absolute folder, or empty for the default."}
             if v and os.path.realpath(v).strip("/").split("/")[0] in ("",) + SYSTEM_DIRS:
                 return 400, {"error": "bad_workspace", "message": "workspace_dir: not the system root nor a system folder."}
+            if v != str(cfg.get("workspace_dir", "")):
+                _log(d, "page.workspace", v or "-")
             cfg["workspace_dir"] = v
         for k in FLAGS:
             if k in body:

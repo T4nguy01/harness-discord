@@ -66,7 +66,7 @@ async def test_pending_request_is_posted_once_in_the_session_thread_with_buttons
     em = posts[0]["embeds"][0]
     assert em["color"] == approvals.ORANGE and "Bash" in em["title"] and "<#T1>" in em["fields"][0]["value"]
     assert "git push" not in em["description"] and "hunter2" not in em["description"] and "abcdef1234567890" not in em["description"]
-    assert ids(posts[0]) == [f"ap:y:{RID}", f"ap:n:{RID}", f"ap:a:{RID}", f"ap:r:{RID}"]
+    assert ids(posts[0])[:2] == [f"ap:n:{RID}", f"ap:r:{RID}"]                              # a masked request cannot be allowed from here
     await e.bot.relay.approvals.tick()
     await e.bot.relay.approvals.tick()
     assert len(e.fd.in_channel("T1")) == 1                                       # no double post
