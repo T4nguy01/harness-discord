@@ -42,6 +42,7 @@ def scenario(fn=None, *, topics=2, mode="live"):
                 e.bot.lay["projects"] = {"dev": PROJECT_CH}
                 e.bot.lay["alerts"] = "CA"
                 e.bot.lay["agents"] = "CAG"
+                e.bot.lay.update({"cat_agents": "CATAG", "guild": GUILD})
                 e.task = asyncio.create_task(e.gw.run())
                 try:
                     await until(e.gw.ready.is_set, what="gateway ready")
@@ -467,16 +468,16 @@ async def test_agent_result_relayed_and_owner_reply_runs_agent(e):
     assert e.fd.messages == []
     e.fh.agent_msgs["dev/blog/writer"].append({"kind": "result", "at": 20.0, "text": "Article prêt", "ok": True, "cost": 0.05})
     await e.bot.relay.agents()
-    assert e.fd.threads[0]["parent"] == "CAG" and "Writer" in e.fd.threads[0]["name"]
-    out = e.fd.in_channel("T1")
+    assert e.fd.made[0]["parent_id"] == "CATAG" and e.fd.made[0]["name"] == "writer"
+    out = e.fd.in_channel("C1")
     assert out[0]["embeds"][0]["description"] == "Article prêt" and "0.05" in out[0]["embeds"][0]["footer"]["text"]
     await e.bot.relay.agents()
-    assert len(e.fd.in_channel("T1")) == 1                      # not repeated
-    await e.fg.dispatch("MESSAGE_CREATE", msg("fais une v2", channel="T1", mid="m5"))
+    assert len(e.fd.in_channel("C1")) == 1 and len(e.fd.made) == 1   # not repeated, one channel only
+    await e.fg.dispatch("MESSAGE_CREATE", msg("fais une v2", channel="C1", mid="m5"))
     await until(lambda: e.fh.agent_runs, what="agent run")
     assert e.fh.agent_runs == [("dev/blog/writer", {"text": "fais une v2"})]
     await until(lambda: e.fd.reactions)
-    assert e.fd.reactions[0][:2] == ("T1", "m5") and e.fh.created == []
+    assert e.fd.reactions[0][:2] == ("C1", "m5") and e.fh.created == []
 
 
 # --- Rest ---------------------------------------------------------------------------------------------------------------
@@ -544,3 +545,14 @@ async def test_dm_flow_menu_then_reply_to_bot_message_continues(e):
     await until(lambda: e.fh.posted, what="reply forwarded")
     assert e.fh.posted[0][0] == "S1" and len(e.fh.created) == 1
     e.fh.cut()
+
+
+@scenario
+async def test_each_agent_gets_its_own_channel_duplicates_carry_the_topic_and_old_threads_are_replaced(e):
+    mk = lambda t: {"path": f"projects/dev/topics/{t}/agents/dependabot", "project": "dev", "topic": t, "name": "dependabot", "display_name": "dependabot"}
+    e.fh.agents = [mk("chat"), mk("blog")]
+    e.bot.relay.st["agents"]["projects/dev/topics/chat/agents/dependabot"] = {"seen": 0, "thread": "OLDTHREAD"}   # a thread of the former #agents
+    await e.bot.relay.agents()
+    assert sorted(c["name"] for c in e.fd.made) == ["blog-dependabot", "chat-dependabot"]
+    assert all(c["parent_id"] == "CATAG" for c in e.fd.made)
+    assert e.bot.relay.agent_of_thread("OLDTHREAD") == ""

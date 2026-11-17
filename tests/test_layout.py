@@ -43,7 +43,7 @@ def test_first_run_builds_everything_private_and_archives_old_channels():
     r = R(OLD)
     lay = asyncio.run(layout.ensure(r, {}, "G", "OWNER", "BOT", [{"name": "dev"}, {"name": "home-assistant"}], "fr"))
     names = [c[0] for c in r.created]
-    assert names[:2] == ["Harness", "Projets"] and "alertes" in names and "dev" in names and "home-assistant" in names
+    assert names[:3] == ["Harness", "Agents", "Projets"] and "alertes" in names and "dev" in names and "home-assistant" in names
     cat = next(c for c in r.ch.values() if c["name"] == "Harness")
     assert any(o["id"] == "OWNER" for o in cat["overwrites"]) and any(o["id"] == "G" and int(o["deny"]) for o in cat["overwrites"])
     assert r.moved and r.moved[0][0] == "1"                         # the old channel moved to Archives
@@ -54,7 +54,7 @@ def test_without_project_channels_only_the_system_ones_exist():
     r = R(OLD)
     lay = asyncio.run(layout.ensure(r, {}, "G", "OWNER", "BOT", [{"name": "dev"}], "fr", project_channels=False))
     names = [c[0] for c in r.created]
-    assert "Projets" not in names and "dev" not in names and "alertes" in names and "agents" in names
+    assert "Projets" not in names and "dev" not in names and "alertes" in names and "Agents" in names
     assert lay["projects"] == {}
 
 

@@ -19,6 +19,7 @@ from .dashboard import Dashboard, web_link
 from .approvals import RID, Approvals
 from .notifier import Notifier
 from .discord_api import DiscordError
+from .layout import private, slug
 from .harness import HarnessError, seg
 
 log = logging.getLogger("harness_discord.relay")
@@ -108,6 +109,7 @@ class Relay:
         self.bot = bot
         self.n = 0
         self.tries: dict[Any, int] = {}
+        self.dup: set[str] = set()
         self.bell = Bell(bot)
         self.dashboard = Dashboard(bot, self)
         self.notifier = Notifier(bot)
@@ -214,7 +216,8 @@ class Relay:
             th = self.st["agents"].get(e["agent"], {}).get("thread")
             if th:
                 return th
-        return self.bot.lay.get(route(e))
+        key = route(e)
+        return self.bot.lay.get(key) or (self.bot.lay.get("notifications") if key == "agents" else None)
 
     # --- feed ------------------------------------------------------------------------------------------------
 
@@ -285,6 +288,8 @@ class Relay:
 
     async def agents(self) -> None:
         d = await self.bot.h.request("GET", "/api/agents")
+        names = [slug(a.get("display_name") or a.get("name", "")) for a in d.get("agents", [])]
+        self.dup = {n for n in names if names.count(n) > 1}      # same agent name in several topics: the topic is added to the channel name
         for a in d.get("agents", []):
             try:
                 await self._agent(a)
@@ -308,16 +313,13 @@ class Relay:
         th = await self.bot.h.request("GET", f"/api/agents/{seg(p)}/{seg(t)}/{seg(name)}/thread", params={"limit": 10})
         msgs = [m for m in th.get("messages", []) if m.get("kind") == "result"]
         info = st.setdefault(path, {"seen": max([m["at"] for m in th.get("messages", [])], default=time.time()), "thread": ""})
+        if info["thread"] and info.get("kind") != "channel":     # an old thread of #agents: from now on the agent has its own channel
+            info["thread"] = ""
+        if not info["thread"] and not await self._agent_channel(a, info):
+            return
         fresh = [m for m in msgs if m["at"] > info["seen"]]
         if not fresh:
             return
-        if not info["thread"]:
-            ch = self.bot.lay.get("agents")
-            if not ch:
-                return
-            label = f"{p}/{t} · {a.get('display_name') or name}"
-            info["thread"] = (await self.bot.rest.start_thread(ch, label[:100]))["id"]
-            self.bot.store.save()
         for m in sorted(fresh, key=lambda x: x["at"]):
             ok = m.get("ok") is not False
             parts = fmt.chunk(m.get("text") or "…", 4000)
@@ -348,6 +350,24 @@ class Relay:
             info.pop("part", None)
             info.pop("part_at", None)
             self.bot.store.save()                                 # posted: never again after a restart
+
+    async def _agent_channel(self, a: dict, info: dict) -> bool:
+        """A private text channel for the agent in the Agents category (created once; False when it cannot be made now)."""
+        b = self.bot
+        cat, guild = b.lay.get("cat_agents"), b.lay.get("guild")
+        if not cat or not guild:
+            return False
+        label = a.get("display_name") or a["name"]
+        cname = slug(label)
+        if cname in self.dup:
+            cname = slug(f"{a['topic']}-{label}")
+        topic = f"{a['project']}/{a['topic']} · {label}"
+        ch = await b.rest.create_channel(guild, cname, 0, parent=cat, topic=topic,
+                                         overwrites=private(guild, b.owner, b.gw.user_id))
+        info["thread"], info["kind"] = ch["id"], "channel"
+        b.store.save()
+        await asyncio.sleep(0.7)                                  # channel creation rate limit
+        return True
 
     def agent_of_thread(self, channel: str) -> str:
         for path, info in self.st["agents"].items():

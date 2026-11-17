@@ -168,7 +168,7 @@ def agent_bot(tmp_path, threads, rest=None):
     bot.h = AgentsH(threads)
     r = Relay(bot)
     for p in threads:
-        r.st["agents"][p] = {"seen": 0, "thread": "TH-" + p[-2:]}
+        r.st["agents"][p] = {"seen": 0, "thread": "TH-" + p[-2:], "kind": "channel"}
     return bot, r
 
 

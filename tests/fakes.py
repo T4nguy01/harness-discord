@@ -162,6 +162,7 @@ class FakeDiscord:
         self.typing = 0
         self.calls: list[tuple[str, str]] = []
         self.channels: dict[str, dict] = {}
+        self.made: list[dict] = []                      # channels created in the guild
         self.fail_next: list[tuple[int, dict]] = []     # queued error responses (status, json body)
         self.n = 1000
         self.auth: set[str] = set()
@@ -206,6 +207,10 @@ class FakeDiscord:
         if (r := re.fullmatch(r"/channels/(\w+)/typing", path)):
             self.typing += 1
             return httpx.Response(204)
+        if (r := re.fullmatch(r"/guilds/(\w+)/channels", path)) and m == "POST":
+            c = {"id": f"C{len(self.made) + 1}", "name": body["name"], "parent_id": body.get("parent_id"), "topic": body.get("topic", "")}
+            self.made.append(c)
+            return httpx.Response(200, json=c)
         if (r := re.fullmatch(r"/channels/(\w+)/messages/(\w+)/threads", path)):
             t = {"id": f"T{len(self.threads) + 1}", "parent": r[1], "message": r[2], "name": body["name"]}
             self.threads.append(t)
