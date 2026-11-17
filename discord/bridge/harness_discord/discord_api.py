@@ -16,7 +16,7 @@ from . import __version__
 
 log = logging.getLogger("harness_discord.discord")
 API = "https://discord.com/api/v10"
-ARCHIVE_AFTER = 10080         # minutes without a message before a thread is archived: 7 days (Discord allows 60, 1440, 4320, 10080)
+ARCHIVE_AFTER = 1440          # minutes without a message before a thread is archived: 1 day (Discord allows 60, 1440, 4320, 10080)
 NO_MENTIONS = {"parse": []}
 USER_AGENT = f"DiscordBot (https://github.com/T4nguy01/harness-discord, {__version__})"
 

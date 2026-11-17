@@ -95,7 +95,7 @@ def _status(ctx):
             "guild_id": str(cfg.get("guild_id", "")),
             "reply_mode": cfg.get("reply_mode", "live"),
             "workspace_dir": str(cfg.get("workspace_dir", "")),
-            **{k: cfg.get(k, True) for k in FLAGS},
+            **{k: cfg.get(k, k != "mirror_web_sessions") for k in FLAGS},
         },
         "layout": {"guild": lay.get("guild", ""), "projects": sorted(lay.get("projects", {})),
                    "system": [k for k in ("alerts", "notifications", "crons", "agents") if lay.get(k)],

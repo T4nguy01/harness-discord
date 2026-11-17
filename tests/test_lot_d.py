@@ -650,7 +650,7 @@ async def test_close_locks_and_archives_the_thread_instead_of_deleting_it(e):
 @scenario
 async def test_session_threads_archive_after_seven_days_and_alerts_gets_slow_mode_once(e):
     from harness_discord.discord_api import ARCHIVE_AFTER
-    assert ARCHIVE_AFTER == 10080 and ARCHIVE_AFTER in (60, 1440, 4320, 10080)
+    assert ARCHIVE_AFTER == 1440 and ARCHIVE_AFTER in (60, 1440, 4320, 10080)
     await e.rest.start_thread(PROJECT_CH, "x")
     await e.bot.rest.start_thread(PROJECT_CH, "y", "m9")
     from harness_discord import layout

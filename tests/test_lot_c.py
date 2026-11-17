@@ -627,10 +627,10 @@ NEW_FLAGS = ("mirror_web_sessions", "reactions", "answer_buttons", "dashboard")
 def test_new_settings_default_true_and_are_strict_booleans(tmp_path, monkeypatch):
     from harness_discord import config
     monkeypatch.setenv("HD_STATE_DIR", str(tmp_path))
-    assert all(config.load_settings()[k] is True for k in NEW_FLAGS)
+    assert all(config.load_settings()[k] is (k != "mirror_web_sessions") for k in NEW_FLAGS)
     api = load_api()
     ctx = {"state_dir": str(tmp_path), "secret": lambda n: None}
-    assert all(api.handle(ctx, "GET", "", "", None)["config"][k] is True for k in NEW_FLAGS)
+    assert all(api.handle(ctx, "GET", "", "", None)["config"][k] is (k != "mirror_web_sessions") for k in NEW_FLAGS)
     for k in NEW_FLAGS:
         for bad in ("false", 0, None, "yes"):
             status, body = api.handle(ctx, "POST", "config", "", {k: bad})
