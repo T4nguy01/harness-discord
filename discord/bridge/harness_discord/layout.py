@@ -13,13 +13,13 @@ CATEGORY, TEXT = 4, 0
 ALERTS_SLOWMODE = 2          # seconds between two messages in #alerts
 
 NAMES = {
-    "en": {"cat_system": "Harness", "cat_projects": "Projects", "cat_agents": "Agents", "cat_archive": "Archives",
+    "en": {"cat_system": "Harness", "cat_projects": "Projects", "cat_archive": "Archives",
            "alerts": "alerts", "notifications": "notifications", "crons": "crons", "agents": "agents",
            "t_alerts": "Server problems, failed jobs, update and sign-in alerts.",
            "t_notifications": "The Harness notifications feed (sales, orders, your scripts).",
            "t_crons": "Reports of scheduled jobs.", "t_agents": "Agent results and their requests (Allow / Deny).",
            "t_project": "Project {name}: write here to start a session (a thread per session)."},
-    "fr": {"cat_system": "Harness", "cat_projects": "Projets", "cat_agents": "Agents", "cat_archive": "Archives",
+    "fr": {"cat_system": "Harness", "cat_projects": "Projets", "cat_archive": "Archives",
            "alerts": "alertes", "notifications": "notifications", "crons": "crons", "agents": "agents",
            "t_alerts": "Problèmes serveur, jobs en échec, alertes de mise à jour et de connexion.",
            "t_notifications": "Le flux de notifications de Harness (ventes, commandes, tes scripts).",
@@ -128,7 +128,6 @@ async def ensure(rest: Rest, lay: dict, guild: str, owner: str, bot: str, projec
     e = _Ensure(rest, lay, guild, owner, bot, chans)
     old = [c["id"] for c in chans.values() if c["type"] == TEXT] if first_run else []       # what existed before us
     system = await e.cat("cat_system", n["cat_system"], e.overwrites())
-    await e.cat("cat_agents", n["cat_agents"], e.overwrites())                  # one channel per agent, made by the relay
     projs = await e.cat("cat_projects", n["cat_projects"], e.overwrites()) if project_channels else ""
     for k in ("alerts", "notifications", "crons"):
         lay[k] = await e.text(k, n[k], system, n["t_" + k])

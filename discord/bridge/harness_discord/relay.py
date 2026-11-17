@@ -317,6 +317,8 @@ class Relay:
             info["thread"] = ""
         if not info["thread"] and not await self._agent_channel(a, info):
             return
+        if info.get("kind") == "channel" and info.get("group") != p:
+            await self._agent_regroup(a, info)
         fresh = [m for m in msgs if m["at"] > info["seen"]]
         if not fresh:
             return
@@ -351,23 +353,43 @@ class Relay:
             info.pop("part_at", None)
             self.bot.store.save()                                 # posted: never again after a restart
 
-    async def _agent_channel(self, a: dict, info: dict) -> bool:
-        """A private text channel for the agent in the Agents category (created once; False when it cannot be made now)."""
+    async def _agent_cat(self, project: str) -> str:
+        """The category of an agent group (one per Harness project: dev, video…), made on first use."""
         b = self.bot
-        cat, guild = b.lay.get("cat_agents"), b.lay.get("guild")
-        if not cat or not guild:
+        key = "cat_agents:" + project
+        if not b.lay.get(key):
+            emoji = b.emojis.get(project, "")
+            title = f"{emoji + ' ' if emoji else ''}Agents · {project}"
+            c = await b.rest.create_channel(b.lay["guild"], title[:100], 4, overwrites=private(b.lay["guild"], b.owner, b.gw.user_id))
+            b.lay[key] = c["id"]
+            b.store.save()
+        return b.lay[key]
+
+    async def _agent_channel(self, a: dict, info: dict) -> bool:
+        """A private text channel for the agent, in the category of its group (created once; False when it cannot be made now)."""
+        b = self.bot
+        if not b.lay.get("guild"):
             return False
+        cat = await self._agent_cat(a["project"])
         label = a.get("display_name") or a["name"]
         cname = slug(label)
         if cname in self.dup:
             cname = slug(f"{a['topic']}-{label}")
         topic = f"{a['project']}/{a['topic']} · {label}"
-        ch = await b.rest.create_channel(guild, cname, 0, parent=cat, topic=topic,
-                                         overwrites=private(guild, b.owner, b.gw.user_id))
-        info["thread"], info["kind"] = ch["id"], "channel"
+        ch = await b.rest.create_channel(b.lay["guild"], cname, 0, parent=cat, topic=topic,
+                                         overwrites=private(b.lay["guild"], b.owner, b.gw.user_id))
+        info["thread"], info["kind"], info["group"] = ch["id"], "channel", a["project"]
         b.store.save()
         await asyncio.sleep(0.7)                                  # channel creation rate limit
         return True
+
+    async def _agent_regroup(self, a: dict, info: dict) -> None:
+        """A channel made before the groups existed moves into the category of its group."""
+        cat = await self._agent_cat(a["project"])
+        await self.bot.rest.modify_channel(info["thread"], parent_id=cat)
+        info["group"] = a["project"]
+        self.bot.store.save()
+        await asyncio.sleep(0.5)
 
     def agent_of_thread(self, channel: str) -> str:
         for path, info in self.st["agents"].items():

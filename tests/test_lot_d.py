@@ -631,7 +631,7 @@ async def test_dashboard_and_agent_results_carry_an_open_in_harness_button(e):
     await e.bot.relay.agents()
     e.fh.agent_msgs["dev/chat/bob"] = [{"kind": "result", "at": time.time() + 5, "text": "Fait.", "ok": True}]
     await e.bot.relay.agents()
-    msg = e.fd.in_channel("C1")[-1]
+    msg = e.fd.in_channel("C2")[-1]
     link_btn = buttons(msg)[0]
     assert link_btn["style"] == 5 and link_btn["url"] == "http://web" and "token" not in link_btn["url"]
     await e.bot.relay.dashboard.tick()
