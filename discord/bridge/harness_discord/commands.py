@@ -373,7 +373,7 @@ class CommandsMixin(ToolsMixin):
         if not th:
             parent = self.lay.get("projects", {}).get(s["path"].split("/")[1] if s["path"].startswith("projects/") else "")
             if not parent:
-                return await say(self.err("no channel for this project"))
+                return await say(self.err("no_channel"))
             try:
                 th = (await self.rest.start_thread(parent, self.thread_name(s["path"], s.get("title") or "…", parent)))["id"]
             except DiscordError as e:

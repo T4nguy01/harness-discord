@@ -72,9 +72,10 @@ class Bot(CommandsMixin, FollowMixin):
         if isinstance(e, HarnessError):
             short = f"{e.status} {e.code}" if e.status else e.code
         elif isinstance(e, str):
-            short = e
+            short = e.replace(" ", "_")
         else:
             short = "unreachable"
+        short = self.t("errc_" + short) if ("errc_" + short) in T[self.lang] else short
         return self.t("err", e=short)
 
     # --- startup -------------------------------------------------------------------------------------------

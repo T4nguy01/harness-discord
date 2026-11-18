@@ -487,7 +487,7 @@ def test_http_errors_are_caught_and_shown_short(tmp_path):
             raise httpx.ConnectError("secret internal detail")
         h.create_session = boom
         await bot.start(Pending(text="x", files=[], channel="D1", message="m", in_dm=True), TOPIC)
-        assert "unreachable" in rest.sent[-1]["content"] and "secret" not in rest.sent[-1]["content"]
+        assert "injoignable" in rest.sent[-1]["content"] and "secret" not in rest.sent[-1]["content"]
 
         async def refuse(*a, **k):
             raise HarnessError(500, "server_error", "Traceback: /opt/secret/path")
@@ -499,7 +499,7 @@ def test_http_errors_are_caught_and_shown_short(tmp_path):
             raise httpx.ReadTimeout("slow")
         h.session = down
         await bot.forward("S1", msg("hi"), "D1")
-        assert "unreachable" in rest.sent[-1]["content"]
+        assert "injoignable" in rest.sent[-1]["content"]
     run(go())
 
 
