@@ -55,6 +55,10 @@ buttons leave a flag file that the bridge picks up within 10 s.
 - Presence ("N sessions running" / "idle") and a pinned dashboard in `alerts` (`dashboard`; the pin needs Manage Messages,
   without it the dashboard is posted unpinned: look for "dashboard not pinned" in the journal).
 
+## Embeds
+Format, limits and the bridge's conventions (colours, fields, images, `fmt.fit_embed`): read `references/embeds.md` before
+building or changing any embed message.
+
 ## Check / fix
 - `systemctl status harness-discord`, `journalctl -u harness-discord -n 50 --no-pager` (never paste a token).
 - `missing DISCORD_BOT_TOKEN...` -> a key or the owner id is missing. `cannot sign in` -> wrong password or two-step on.
