@@ -47,8 +47,42 @@ COLOR = {"info": 0x5865F2, "success": 0x57F287, "warning": 0xFEE75C, "error": 0x
 DONE_COLOR = 0x95A5A6
 
 
-def render(e: dict, web_url: str) -> tuple[dict, list[dict]]:
+# Textes en anglais que Harness lui-même publie dans le flux (système) : traduits côté pont quand la langue est le français.
+_FR_RULES = [
+    (r"(\d+) % of today's budget used", r"\1 % du budget du jour utilisé"),
+    (r"Daily budget reached", "Budget du jour atteint"),
+    (r"Runs again", "Reprise des exécutions"),
+    (r"([\d.]+) \$ spent today for a budget of ([\d.]+) \$ \(Settings -> Usage\)\. Once it is reached, scheduled jobs and agents wait for tomorrow\.",
+     r"\1 $ dépensés aujourd'hui pour un budget de \2 $ (Réglages -> Usage). Une fois atteint, les tâches planifiées et les agents attendent demain."),
+    (r"([\d.]+) \$ spent today for a budget of ([\d.]+) \$\. Scheduled jobs and agents wait for tomorrow; your own messages still run\. Raise the budget in Settings -> Usage to let them run today\.",
+     r"\1 $ dépensés aujourd'hui pour un budget de \2 $. Les tâches planifiées et les agents attendent demain ; vos messages passent toujours. Augmentez le budget dans Réglages -> Usage pour les relancer aujourd'hui."),
+    (r"(.+) is waiting for your OK", r"\1 attend votre accord"),
+    (r"Agents cannot run in their sandbox", "Les agents ne peuvent pas s'exécuter dans leur bac à sable"),
+    (r"(.+): agent\.json cannot be read", r"\1 : agent.json illisible"),
+    (r"(.+): a trigger lost its webhook", r"\1 : un déclencheur a perdu son webhook"),
+    (r"Test event(.*)", r"Événement de test\1"),
+    (r"Test from (.+)", r"Test depuis \1"),
+    (r"A test sent from the agent page: check that the agent starts and answers\.",
+     "Test envoyé depuis la page de l'agent : vérifiez qu'il démarre et répond."),
+    (r"If you can read this, the source works\.", "Si vous lisez ceci, la source fonctionne."),
+    (r"(\d+) dependency\(ies\) with a known vulnerability", r"\1 dépendance(s) avec une faille connue"),
+    (r"Open", "Ouvrir"), (r"Approve", "Approuver"), (r"Deny", "Refuser"), (r"Dismiss", "Ignorer"),
+]
+
+
+def fr(s: Any) -> str:
+    s = str(s or "")
+    for pat, rep in _FR_RULES:
+        if re.fullmatch(pat, s.strip()):
+            return re.sub(pat, rep, s.strip())
+    return s
+
+
+def render(e: dict, web_url: str, lang: str = "en") -> tuple[dict, list[dict]]:
     """A feed event as a Discord embed (colour = level) plus its action buttons."""
+    if lang == "fr":
+        e = {**e, "title": fr(e.get("title")), "body": fr(e.get("body")), "resolution": fr(e.get("resolution")) if e.get("resolution") else e.get("resolution"),
+             "actions": [{**a, "label": fr(a.get("label"))} if isinstance(a, dict) and a.get("label") else a for a in e.get("actions") or []]}
     done = bool(e.get("resolved"))
     embed: dict = {"title": f"{LEVEL.get(e.get('level'), 'ℹ️')} {fmt.clip(str(e.get('title') or ''), 240)}",
                    "color": DONE_COLOR if done else COLOR.get(e.get("level"), COLOR["info"])}
@@ -233,7 +267,7 @@ class Relay:
             try:
                 ch = self.channel_for(e)
                 if ch and not e.get("resolved") and not self.is_approval(e):
-                    embed, comps = render(e, self.bot.web_url)
+                    embed, comps = render(e, self.bot.web_url, self.bot.lang)
                     m = await self.bot.rest.send(ch, "", embeds=[embed], components=comps or None,
                                                  silent=e.get("level") in QUIET)
                     st["posted"][str(e["id"])] = {"channel": ch, "message": m["id"], "done": bool(e.get("resolved")),
@@ -258,7 +292,7 @@ class Relay:
                          and not str(e.get("ref") or "").startswith("approval:"))        # "seen" on the web: its button goes
             if e and (e.get("resolved") or read_only) and not info.get("done"):
                 try:
-                    embed, comps = render(e, self.bot.web_url)
+                    embed, comps = render(e, self.bot.web_url, self.bot.lang)
                     if read_only:
                         embed["color"] = DONE_COLOR
                         embed["fields"] = [{"name": "✓", "value": self.bot.t("seen")}]

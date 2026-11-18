@@ -488,7 +488,7 @@ class Bot(CommandsMixin, FollowMixin):
                 e = await self.relay.act(int(eid), action)
             except HERR as err:
                 return await self.rest.followup(i, app, self.err(err), ephemeral=True)
-            embed, comps = render(e, self.web_url)
+            embed, comps = render(e, self.web_url, self.lang)
             if action == "seen" and not e.get("resolved"):          # "seen" does not resolve the event: show it as done here
                 embed["color"] = DONE_COLOR
                 embed["fields"] = [{"name": "✓", "value": self.t("seen")}]

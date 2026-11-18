@@ -849,3 +849,14 @@ def test_setup_docs_no_longer_recommend_administrator():
         text = (root / f).read_text()
         assert not re.search(r"(Administrator|Administrateur)\s*,\s*(or|ou)\b|permissions?\s*:?\s*Administrat", text), f
         assert "Manage Roles" in text or "Gérer les rôles" in text, f
+
+
+def test_system_feed_texts_are_french():
+    from harness_discord.relay import render
+    e = {"id": "1", "level": "warning", "title": "Daily budget reached", "source": "system",
+         "body": "15.03 $ spent today for a budget of 15.00 $. Scheduled jobs and agents wait for tomorrow; your own messages still run. Raise the budget in Settings -> Usage to let them run today.",
+         "actions": [{"id": "open", "label": "Open", "style": "link"}]}
+    emb, _ = render(e, "http://x", "fr")
+    assert "Budget du jour atteint" in emb["title"] and "dépensés" in emb["description"]
+    emb, _ = render(e, "http://x", "en")
+    assert "Daily budget reached" in emb["title"]
