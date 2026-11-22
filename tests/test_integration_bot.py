@@ -468,7 +468,7 @@ async def test_agent_result_relayed_and_owner_reply_runs_agent(e):
     assert e.fd.messages == []
     e.fh.agent_msgs["dev/blog/writer"].append({"kind": "result", "at": 20.0, "text": "Article prêt", "ok": True, "cost": 0.05})
     await e.bot.relay.agents()
-    assert e.fd.made[0]["name"] == "Agents · dev" and e.fd.made[1]["parent_id"] == "C1" and e.fd.made[1]["name"] == "writer"
+    assert e.fd.made[0]["name"] == "🤖｜AGENTS · DEV" and e.fd.made[1]["parent_id"] == "C1" and e.fd.made[1]["name"] == "writer"
     out = e.fd.in_channel("C2")
     assert out[0]["embeds"][0]["description"] == "Article prêt" and "0.05" in out[0]["embeds"][0]["footer"]["text"]
     await e.bot.relay.agents()
@@ -554,5 +554,5 @@ async def test_each_agent_gets_its_own_channel_duplicates_carry_the_topic_and_ol
     e.bot.relay.st["agents"]["projects/dev/topics/chat/agents/dependabot"] = {"seen": 0, "thread": "OLDTHREAD"}   # a thread of the former #agents
     await e.bot.relay.agents()
     assert sorted(c["name"] for c in e.fd.made if c["parent_id"]) == ["blog-dependabot", "chat-dependabot"]
-    assert [c["name"] for c in e.fd.made if not c["parent_id"]] == ["Agents · dev"]       # one category for the group
+    assert [c["name"] for c in e.fd.made if not c["parent_id"]] == ["🤖｜AGENTS · DEV"]       # one category for the group
     assert e.bot.relay.agent_of_thread("OLDTHREAD") == ""

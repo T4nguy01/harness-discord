@@ -53,6 +53,8 @@ DEFAULTS = {
     "dashboard": True,       # a pinned dashboard message in the alerts channel
     "proactive": True,       # morning task summary, plan above 80 %, failed backup
     "tool_approvals": True,  # post pending tool-call approvals with Allow / Deny / Always buttons (same queue as the web UI and Telegram)
+    "feed_skip_sources": [],  # feed sources never posted to Discord (their own channel already shows them, e.g. ["n8n"])
+    "n8n_errors": {},        # {"channel": id, "webhook": id}: errors posted there by that Discord webhook become feed events (data only, nothing is run)
     "workspace_dir": "",     # workspace root for /harness files (empty = $HD_WORKSPACE or /root/maxxing)
 }
 BOOLS = ("relay_feed", "relay_agents", "relay_bell", "mirror_web_sessions", "reactions", "answer_buttons", "dashboard", "proactive", "tool_approvals")

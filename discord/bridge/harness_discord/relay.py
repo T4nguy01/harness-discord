@@ -265,7 +265,7 @@ class Relay:
         byid = {e["id"]: e for e in events}
         for e in sorted((x for x in events if x["id"] > st["feed_last"]), key=lambda x: x["id"]):
             try:
-                ch = self.channel_for(e)
+                ch = None if e.get("source") in (self.bot.cfg.get("feed_skip_sources") or []) else self.channel_for(e)
                 if ch and not e.get("resolved") and not self.is_approval(e):
                     embed, comps = render(e, self.bot.web_url, self.bot.lang)
                     m = await self.bot.rest.send(ch, "", embeds=[embed], components=comps or None,
@@ -393,7 +393,7 @@ class Relay:
         key = "cat_agents:" + project
         if not b.lay.get(key):
             emoji = b.emojis.get(project, "")
-            title = f"{emoji + ' ' if emoji else ''}Agents · {project}"
+            title = f"{emoji or '🤖'}｜AGENTS · {project.upper()}"           # même style que les catégories existantes
             c = await b.rest.create_channel(b.lay["guild"], title[:100], 4, overwrites=private(b.lay["guild"], b.owner, b.gw.user_id))
             b.lay[key] = c["id"]
             b.store.save()

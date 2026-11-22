@@ -188,7 +188,33 @@ class Bot(CommandsMixin, FollowMixin):
 
     # --- incoming messages ---------------------------------------------------------------------------------
 
+    async def ingest_n8n(self, m: dict) -> bool:
+        """An n8n error posted by the configured webhook in the configured channel: one feed event, never a command."""
+        c = self.cfg.get("n8n_errors") or {}
+        if not (c.get("channel") and c.get("webhook")):
+            return False
+        if m.get("channel_id") != str(c["channel"]) or m.get("webhook_id") != str(c["webhook"]):
+            return False
+        e = (m.get("embeds") or [{}])[0]
+        fields = {f.get("name", ""): f.get("value", "") for f in e.get("fields") or []}
+        clean = lambda v: re.sub(r"[`*_]", "", str(v or "")).strip()
+        wf = clean(next((v for k, v in fields.items() if "Workflow" in k and "ID" not in k), "")) or "workflow inconnu"
+        wf = re.sub(r"\]\(.*", "", wf).lstrip("[")
+        wid = clean(next((v for k, v in fields.items() if "Workflow ID" in k), ""))
+        err = clean(next((v for k, v in fields.items() if "Erreur" in k and "Description" not in k), "")) or "erreur inconnue"
+        node = clean(next((v for k, v in fields.items() if "Nœud" in k), ""))
+        body = (f"{node}\n" if node else "") + err
+        ev = {"title": f"n8n : {wf}"[:120], "body": body[:500], "level": "error", "source": "n8n",
+              "dedupe": f"n8n:{wid or wf}:{err[:80]}", "group": f"n8n:{wid or wf}"}
+        try:
+            await self.h.request("POST", "/api/feed", json=ev)
+        except Exception as ex:  # noqa: BLE001
+            log.warning("n8n error: could not post to the feed (%s)", ex)
+        return True
+
     async def on_message(self, m: dict) -> None:
+        if await self.ingest_n8n(m):
+            return
         a = m.get("author") or {}
         if a.get("bot") or a.get("id") != self.owner:
             return

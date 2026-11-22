@@ -278,3 +278,30 @@ def test_download_allowlist_refuses_other_hosts():
 
     for url in ("http://cdn.discordapp.com/a", "https://evil.example/a", "https://127.0.0.1/a"):
         asyncio.run(go(url))
+
+
+def test_n8n_error_becomes_feed_event(tmp_path, monkeypatch):
+    """Un message du webhook n8n dans le salon prévu devient un événement du flux ; rien d'autre ne passe."""
+    bot = make(tmp_path)[0]
+    bot.cfg["n8n_errors"] = {"channel": "C1", "webhook": "W1"}
+    calls = []
+
+    async def req(method, path, **kw):
+        calls.append((method, path, kw.get("json")))
+        return {}
+
+    bot.h.request = req
+    emb = {"fields": [{"name": "🛠️ Workflow", "value": "[Mon flux](https://x/workflow/abc)"}, {"name": "🆔 Workflow ID", "value": "`abc`"},
+                      {"name": "❌ Erreur", "value": "```\nboom\n```"}]}
+    ok = {"channel_id": "C1", "webhook_id": "W1", "author": {"bot": True, "id": "9"}, "embeds": [emb]}
+    asyncio.run(bot.on_message(ok))
+    assert len(calls) == 1 and calls[0][:2] == ("POST", "/api/feed")
+    assert calls[0][2]["title"] == "n8n : Mon flux" and calls[0][2]["level"] == "error" and "boom" in calls[0][2]["body"]
+    asyncio.run(bot.on_message({**ok, "webhook_id": "W2"}))          # autre webhook : ignoré
+    asyncio.run(bot.on_message({**ok, "channel_id": "C2"}))          # autre salon : ignoré
+    assert len(calls) == 1
+
+
+def test_feed_skip_sources_in_config():
+    from harness_discord import config
+    assert config.DEFAULTS["feed_skip_sources"] == []
