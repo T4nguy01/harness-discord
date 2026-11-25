@@ -101,6 +101,7 @@ const ID_RE = /^\d{15,25}$/;
 
 const CSS = `.hd-sw{position:relative;flex:none;width:38px;height:22px;margin-top:2px}
 .hd-sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:1}
+@media(prefers-reduced-motion:reduce){.hd-sw i,.hd-sw i::after{transition:none!important}}
 .hd-sw i{position:absolute;inset:0;border-radius:11px;background:rgba(128,128,128,.4);transition:background .15s}
 .hd-sw i::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
 .hd-sw input:checked+i{background:#5865f2}.hd-sw input:checked+i::after{transform:translateX(16px)}
